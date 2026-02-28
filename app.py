@@ -71,6 +71,7 @@ _DEFAULTS = {
     "last_title": "",
     "last_description": "",
     "last_script": "",
+    "seen_reddit_ids": set(),
 }
 
 for key, val in _DEFAULTS.items():
@@ -118,9 +119,25 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("Pexels API Key")
+    st.subheader("🧹 Maintenance")
+    if st.button("🗑️ Clear Cache", use_container_width=True, help="Delete all temporary audio and video files"):
+        count = 0
+        for directory in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
+            if directory.exists():
+                for f in directory.iterdir():
+                    if f.is_file():
+                        try:
+                            f.unlink()
+                            count += 1
+                        except Exception:
+                            pass
+        st.toast(f"Cleared {count} files.")
+        st.rerun()
+
+    st.divider()
+    st.subheader("🔑 API Keys")
     st.caption(
-        "Set the `PEXELS_API_KEY` in your `.env` file (see `.env.example`)."
+        "Set your API keys in the `.env` file (see `.env.example`)."
     )
 
 
@@ -144,9 +161,13 @@ with st.expander("🤖 Source Content from Reddit"):
     with col_red2:
         if st.button("🔍 Fetch Story", use_container_width=True):
             with st.spinner("Fetching from Reddit..."):
-                story = get_reddit_story(reddit_category)
+                story = get_reddit_story(
+                    reddit_category,
+                    seen_ids=st.session_state.seen_reddit_ids
+                )
                 if story:
                     st.session_state["reddit_story"] = story
+                    st.session_state.seen_reddit_ids.add(story["id"])
                     st.success(f"Fetched: {story['title']}")
                 else:
                     st.error("Could not fetch a suitable story. Check credentials or filters.")
@@ -154,8 +175,19 @@ with st.expander("🤖 Source Content from Reddit"):
     if "reddit_story" in st.session_state:
         story = st.session_state["reddit_story"]
         if st.button("📝 Use this Story", use_container_width=True):
+            # Update the underlying session state values
             st.session_state.last_script = story["text"]
             st.session_state.last_title = story["title"]
+            st.session_state.last_description = f"Story from r/{story['subreddit']}\n#shorts #reddit"
+            st.session_state.last_keyword = reddit_category.lower()
+
+            # CRITICAL: Also update the widget keys directly so the form
+            # reflects the changes even if the user has already typed.
+            st.session_state.f_script = st.session_state.last_script
+            st.session_state.f_title = st.session_state.last_title
+            st.session_state.f_desc = st.session_state.last_description
+            st.session_state.f_keyword = st.session_state.last_keyword
+
             # We use st.rerun() to populate the form fields in the next run
             st.rerun()
 
@@ -166,22 +198,27 @@ with st.form("video_form"):
         "📝 Video Script",
         height=180,
         placeholder="Paste your narration script here…",
-        value=st.session_state.last_script if "reddit_story" in st.session_state else ""
+        value=st.session_state.last_script,
+        key="f_script"
     )
     keyword = st.text_input(
         "🔍 Background Keyword",
         placeholder='e.g. "ocean waves", "city night", "forest"',
-        value=st.session_state.last_keyword
+        value=st.session_state.last_keyword,
+        key="f_keyword"
     )
     video_title = st.text_input(
         "🏷️ Video Title",
         placeholder="Title for YouTube / TikTok",
-        value=st.session_state.last_title if "reddit_story" in st.session_state else ""
+        value=st.session_state.last_title,
+        key="f_title"
     )
     video_description = st.text_area(
         "📄 Video Description",
         height=80,
         placeholder="Short description / hashtags",
+        value=st.session_state.last_description,
+        key="f_desc"
     )
     generate_btn = st.form_submit_button(
         "🚀 Generate Video", use_container_width=True
@@ -213,21 +250,28 @@ def _run_generate(script: str, kw: str) -> None:
     st.session_state.final_video_path = final_path
 
     progress.progress(100, text="✅ Video connected to story!")
+    st.balloons()
 
 
 if generate_btn:
-    if not script_text.strip():
+    # Read from keys to be extra sure they match current state
+    script_text = st.session_state.get("f_script", "").strip()
+    keyword = st.session_state.get("f_keyword", "").strip()
+    video_title = st.session_state.get("f_title", "").strip()
+    video_description = st.session_state.get("f_desc", "").strip()
+
+    if not script_text:
         st.warning("Please enter a script.")
-    elif not keyword.strip():
+    elif not keyword:
         st.warning("Please enter a background keyword.")
     else:
         # BUG FIX: Persist form values before running pipeline so they
         # survive st.rerun(). Without this, clicking "Regenerate BG"
         # after a rerun loses the keyword/title/description.
-        st.session_state.last_keyword = keyword.strip()
-        st.session_state.last_title = video_title.strip()
-        st.session_state.last_description = video_description.strip()
-        st.session_state.last_script = script_text.strip()
+        st.session_state.last_keyword = keyword
+        st.session_state.last_title = video_title
+        st.session_state.last_description = video_description
+        st.session_state.last_script = script_text
 
         try:
             _run_generate(script_text.strip(), keyword.strip())
@@ -277,6 +321,7 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         for platform, ok in results.items():
                             if ok:
                                 st.success(f"✅ {platform.title()} upload succeeded!")
+                                st.snow()
                             else:
                                 st.error(
                                     f"❌ {platform.title()} upload failed. "
