@@ -110,12 +110,30 @@ def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     # 2. Trim to target
     clip = clip.subclipped(0, target_duration)
     
-    # 3. Resize and crop
-    # We want to fill 1080x1920
-    clip = clip.resized(height=VIDEO_HEIGHT)
-    # Center crop if width is too large
-    if clip.w > VIDEO_WIDTH:
-        x_center = clip.w / 2
-        clip = clip.cropped(x1=x_center - VIDEO_WIDTH/2, y1=0, x2=x_center + VIDEO_WIDTH/2, y2=VIDEO_HEIGHT)
+    # 3. Resize and crop (Cover strategy: ensure 1080x1920 is fully filled)
+    w, h = clip.w, clip.h
+    target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT
+    current_ratio = w / h
+
+    if current_ratio > target_ratio:
+        # Video is wider than target: scale based on height
+        clip = clip.resized(height=VIDEO_HEIGHT)
+    else:
+        # Video is taller than target: scale based on width
+        clip = clip.resized(width=VIDEO_WIDTH)
+
+    # Recalculate dimensions after resize
+    w, h = clip.w, clip.h
+
+    # Center crop to exactly 1080x1920
+    x_center = w / 2
+    y_center = h / 2
+
+    clip = clip.cropped(
+        x1=x_center - VIDEO_WIDTH/2,
+        y1=y_center - VIDEO_HEIGHT/2,
+        x2=x_center + VIDEO_WIDTH/2,
+        y2=y_center + VIDEO_HEIGHT/2
+    )
     
     return clip

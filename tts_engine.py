@@ -20,14 +20,16 @@ logger = logging.getLogger(__name__)
 def _generate_sync(text: str, output_path: Path, voice: str) -> None:
     """
     Run TTS in a standalone subprocess to guarantee event loop isolation.
+    Uses stdin for the text to avoid command-line length limitations.
     """
     python_exe = sys.executable
     cli_script = Path(__file__).parent / "tts_cli.py"
     
     try:
-        # Run the standalone script
+        # Run the standalone script, passing the text through stdin
         result = subprocess.run(
-            [python_exe, str(cli_script), "--text", text, "--voice", voice, "--output", str(output_path)],
+            [python_exe, str(cli_script), "--voice", voice, "--output", str(output_path)],
+            input=text,
             capture_output=True,
             text=True,
             check=True

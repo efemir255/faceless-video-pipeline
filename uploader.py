@@ -245,11 +245,12 @@ def _upload_youtube(
         not_for_kids = page.locator(", ".join(kids_selectors)).first
         try:
             not_for_kids.scroll_into_view_if_needed()
-            not_for_kids.wait_for(state="visible", timeout=10_000)
+            not_for_kids.wait_for(state="visible", timeout=15_000)
             not_for_kids.click()
             logger.debug("Selected 'Not made for kids'.")
         except Exception as e:
-            logger.error("Could not click 'Not made for kids': %s", e)
+            logger.error("MANDATORY STEP FAILED: Could not click 'Not made for kids': %s", e)
+            raise RuntimeError(f"Could not select 'Not made for kids': {e}")
 
         # 8 — Click through Next until "Visibility" step
         logger.debug("Clicking Next buttons...")
@@ -278,14 +279,13 @@ def _upload_youtube(
 
         time.sleep(1)
 
-        # 10 — Publish
-        done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button").first
-        done_btn.wait_for(state="visible", timeout=10_000)
-
         # Wait until YouTube finishes processing
         logger.info("Waiting for upload processing to finish…")
         _wait_for_upload_processing(page, timeout_sec=300)
 
+        # 10 — Publish (Re-locate the button to avoid stale element issues)
+        done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button").first
+        done_btn.wait_for(state="visible", timeout=15_000)
         done_btn.click()
 
         # BUG FIX: Wait for the success dialog

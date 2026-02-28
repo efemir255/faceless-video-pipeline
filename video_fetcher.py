@@ -9,6 +9,7 @@ returned — ``video_engine.py`` will loop it to fit.
 
 import logging
 import random
+import re
 from pathlib import Path
 
 import requests
@@ -18,6 +19,9 @@ from config import PEXELS_API_KEY, VIDEO_DIR
 logger = logging.getLogger(__name__)
 
 _PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
+
+# Shared requests session for performance and connection pooling
+_session = requests.Session()
 
 
 def get_background_video(
@@ -44,7 +48,7 @@ def get_background_video(
         "per_page": 10,
         "size": "large",
     }
-    resp = requests.get(_PEXELS_SEARCH_URL, headers=headers, params=params, timeout=15)
+    resp = _session.get(_PEXELS_SEARCH_URL, headers=headers, params=params, timeout=15)
     resp.raise_for_status()
     videos = resp.json().get("videos", [])
     if not videos:
@@ -79,9 +83,12 @@ def get_clips_for_script(
     Split script into segments, fetch a relevant clip for each,
     and return a list of (path, duration) dicts.
     """
-    # ── 1. Split script into sentences ──
-    # Clean and split by period, exclamation, or question mark
-    sentences = [s.strip() for s in script.replace("\n", " ").split(".") if len(s.strip()) > 5]
+    # ── 1. Split script into segments ──
+    # Split by period, exclamation, or question mark using regex
+    # Handle common abbreviations to avoid splitting prematurely
+    raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
+    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
+
     if not sentences:
         sentences = [script.strip()]
 
@@ -126,7 +133,7 @@ def get_clips_for_script(
 
 def _download_file(url: str, output_path: Path) -> None:
     """Helper to download a file with temp-rename protection."""
-    dl_resp = requests.get(url, stream=True, timeout=120)
+    dl_resp = _session.get(url, stream=True, timeout=120)
     dl_resp.raise_for_status()
 
     tmp_path = output_path.with_suffix(".tmp")
