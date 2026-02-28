@@ -94,6 +94,8 @@ def get_clips_for_script(
     # Recalculate word counts based only on sentences we actually use
     all_sentence_words = [len(s.split()) for s in sentences]
     total_sentence_words = sum(all_sentence_words)
+    if total_sentence_words == 0:
+        total_sentence_words = 1  # Avoid ZeroDivisionError
 
     # List of (keyword, duration, output_path) tasks
     tasks = []
@@ -136,8 +138,23 @@ def get_clips_for_script(
     # Final pass: fill any gaps with neighboring clips
     for i in range(len(clips_metadata)):
         if clips_metadata[i] is None:
-            if i > 0 and clips_metadata[i-1]:
-                clips_metadata[i] = clips_metadata[i-1].copy()
+            # Try to find the nearest non-None neighbor to copy
+            neighbor = None
+            # Look backwards first
+            for j in range(i - 1, -1, -1):
+                if clips_metadata[j] is not None:
+                    neighbor = clips_metadata[j]
+                    break
+
+            # If not found, look forwards
+            if neighbor is None:
+                for j in range(i + 1, len(clips_metadata)):
+                    if clips_metadata[j] is not None:
+                        neighbor = clips_metadata[j]
+                        break
+
+            if neighbor:
+                clips_metadata[i] = neighbor.copy()
             else:
                 # This is a dire failure case, should rarely happen
                 raise RuntimeError(f"Could not fetch ANY clips for script.")

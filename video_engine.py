@@ -65,7 +65,8 @@ def render_final_video(
 
         # Stitch clips together
         logger.info("Stitching %d clips...", len(video_clips))
-        final_video = concatenate_videoclips(video_clips, method="compose")
+        # method="chain" is faster and more stable for identical-size clips
+        final_video = concatenate_videoclips(video_clips, method="chain")
         
         # Ensure it matches audio duration exactly (trim/loop last bit if needed)
         if final_video.duration > audio_duration:
@@ -119,7 +120,8 @@ def render_final_video(
 
 def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     """Load, resize, and loop/trim a clip to match target duration."""
-    clip = VideoFileClip(str(path))
+    # Load without audio to save RAM and avoid crash
+    clip = VideoFileClip(str(path), audio=False).with_fps(VIDEO_FPS)
     
     # 1. Loop if shorter than target
     if clip.duration < target_duration:
