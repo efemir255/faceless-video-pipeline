@@ -42,6 +42,8 @@ def render_final_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     audio_clip = None
+    final_video = None
+    final_clip = None
     clips_to_close = []
 
     try:
@@ -80,22 +82,27 @@ def render_final_video(
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
+            preset="ultrafast",
             threads=4,
             logger=None,
         )
 
-        final_path = str(output_path.resolve())
-        # Close explicitly before returning
-        final_clip.close()
-        final_video.close()
-
-        return final_path
+        return str(output_path.resolve())
 
     except Exception as exc:
         logger.error("Video rendering failed: %s", exc)
         raise
     finally:
+        if final_clip:
+            try:
+                final_clip.close()
+            except Exception:
+                pass
+        if final_video:
+            try:
+                final_video.close()
+            except Exception:
+                pass
         if audio_clip:
             try:
                 audio_clip.close()

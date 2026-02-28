@@ -52,13 +52,14 @@ import shutil
 def _get_browser_context(playwright):
     """Return a persistent Chromium context that keeps login cookies."""
     # BUG FIX: Ensure the profile directory is not locked by a previous 
-    # crashed instance. Windows-specific: SingletonLock files.
-    lock_file = Path(BROWSER_USER_DATA_DIR) / "SingletonLock"
-    if lock_file.exists():
-        try:
-            lock_file.unlink()
-        except Exception:
-             pass
+    # crashed instance.
+    for lock_name in ["SingletonLock", "SingletonCookie"]:
+        lock_file = Path(BROWSER_USER_DATA_DIR) / lock_name
+        if lock_file.exists():
+            try:
+                lock_file.unlink()
+            except Exception:
+                 pass
 
     context = playwright.chromium.launch_persistent_context(
         user_data_dir=BROWSER_USER_DATA_DIR,

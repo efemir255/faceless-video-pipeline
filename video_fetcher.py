@@ -10,6 +10,7 @@ returned — ``video_engine.py`` will loop it to fit.
 import logging
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
@@ -80,53 +81,66 @@ def get_clips_for_script(
     base_keyword: str = "nature",
 ) -> list[dict]:
     """
-    Split script into segments, fetch a relevant clip for each,
+    Split script into segments, fetch relevant clips in parallel,
     and return a list of (path, duration) dicts.
     """
     # ── 1. Split script into segments ──
-    # Split by period, exclamation, or question mark using regex
-    # Handle common abbreviations to avoid splitting prematurely
     raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
     sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
 
     if not sentences:
         sentences = [script.strip()]
 
-    # Estimate duration per sentence (simple word count ratio)
-    words = script.split()
-    total_words = len(words)
-    clips_metadata = []
+    # Recalculate word counts based only on sentences we actually use
+    all_sentence_words = [len(s.split()) for s in sentences]
+    total_sentence_words = sum(all_sentence_words)
 
+    # List of (keyword, duration, output_path) tasks
+    tasks = []
     for i, sentence in enumerate(sentences):
-        sent_words = len(sentence.split())
+        sent_words = all_sentence_words[i]
         # Percentage of total duration this sentence takes
-        sent_duration = (sent_words / total_words) * total_duration
+        sent_duration = (sent_words / total_sentence_words) * total_duration
         
-        # Combine base keyword with a snippet of the sentence
         snippet = " ".join(sentence.split()[:3])
         keyword = f"{base_keyword} {snippet}".strip()
+        path = VIDEO_DIR / f"clip_{i:03d}.mp4"
         
-        logger.info("Fetching clip for segment %d: '%s' (%.1fs)", i+1, keyword, sent_duration)
-        
+        tasks.append((keyword, sent_duration, path, i))
+
+    clips_metadata = [None] * len(tasks)
+
+    def _fetch_task(task):
+        kw, dur, path, idx = task
+        logger.info("Fetching clip %d: '%s' (%.1fs)", idx+1, kw, dur)
         try:
-            filename = f"clip_{i:03d}.mp4"
-            path = VIDEO_DIR / filename
-            clip_path = get_background_video(keyword, sent_duration, output_path=path)
-            clips_metadata.append({
-                "path": clip_path,
-                "duration": sent_duration
-            })
+            p = get_background_video(kw, dur, output_path=path)
+            return {"path": p, "duration": dur, "idx": idx}
         except Exception as exc:
-            logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
-            # Fallback to a generic keyword if specific one fails
-            if i > 0 and clips_metadata:
-                # Reuse previous clip metadata if possible (it will be looped in engine)
-                clips_metadata.append(clips_metadata[-1])
+            logger.warning("Failed to fetch '%s': %s. Using fallback.", kw, exc)
+            try:
+                p = get_background_video("nature", dur, output_path=path)
+                return {"path": p, "duration": dur, "idx": idx}
+            except Exception:
+                return None
+
+    # Run downloads in parallel
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(_fetch_task, tasks))
+
+    # Fill in the metadata, handling failures
+    for res in results:
+        if res:
+            clips_metadata[res["idx"]] = {"path": res["path"], "duration": res["duration"]}
+
+    # Final pass: fill any gaps with neighboring clips
+    for i in range(len(clips_metadata)):
+        if clips_metadata[i] is None:
+            if i > 0 and clips_metadata[i-1]:
+                clips_metadata[i] = clips_metadata[i-1].copy()
             else:
-                # Absolute fallback
-                path = VIDEO_DIR / f"clip_{i:03d}.mp4"
-                clip_path = get_background_video("nature", sent_duration, output_path=path)
-                clips_metadata.append({"path": clip_path, "duration": sent_duration})
+                # This is a dire failure case, should rarely happen
+                raise RuntimeError(f"Could not fetch ANY clips for script.")
 
     return clips_metadata
 
