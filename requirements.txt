@@ -4,7 +4,7 @@
 
 edge-tts>=6.1.0
 mutagen>=1.47.0
-moviepy>=2.0.0
+moviepy>=2.2.1
 requests>=2.31.0
 streamlit>=1.30.0
 playwright>=1.40.0

@@ -14,10 +14,6 @@ Features
 * Account setup panel to log into YouTube / TikTok once.
 """
 
-import sys
-sys.path.append(r"C:\Users\efemi\.gemini\antigravity\scratch\faceless-video-pipeline")
-
-
 import asyncio
 import logging
 import os
@@ -176,7 +172,7 @@ def _run_generate(script: str, kw: str) -> None:
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
-    clips_metadata = get_clips_for_script(script, duration)
+    clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
     st.session_state.video_path = clips_metadata  # Store the list of clips
 
     # Step 3 — Render
@@ -265,8 +261,9 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                     with st.spinner("Analyzing script and fetching new clips…"):
                         # Use the persisted script for semantic regeneration
                         script = st.session_state.last_script or "nature"
+                        keyword = st.session_state.last_keyword or "nature"
                         new_clips = get_clips_for_script(
-                            script, st.session_state.audio_duration
+                            script, st.session_state.audio_duration, base_keyword=keyword
                         )
                         st.session_state.video_path = new_clips
 

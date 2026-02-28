@@ -50,8 +50,19 @@ def get_background_video(
     if not videos:
         raise RuntimeError(f"No videos found for keyword='{keyword}'")
 
-    chosen = max(videos, key=lambda v: v.get("duration", 0))
-    video_files = [f for f in chosen.get("video_files", []) if f.get("file_type", "").startswith("video/mp4")]
+    # Filter for videos that have mp4 files
+    valid_videos = []
+    for v in videos:
+        mp4_files = [f for f in v.get("video_files", []) if f.get("file_type", "").startswith("video/mp4")]
+        if mp4_files:
+            v["mp4_files"] = mp4_files
+            valid_videos.append(v)
+
+    if not valid_videos:
+        raise RuntimeError(f"No MP4 files found for keyword='{keyword}' among {len(videos)} videos.")
+
+    chosen = max(valid_videos, key=lambda v: v.get("duration", 0))
+    video_files = chosen["mp4_files"]
     video_files.sort(key=lambda f: f.get("height", 0), reverse=True)
     download_url = video_files[0].get("link")
 
@@ -62,6 +73,7 @@ def get_background_video(
 def get_clips_for_script(
     script: str,
     total_duration: float,
+    base_keyword: str = "nature",
 ) -> list[dict]:
     """
     Split script into segments, fetch a relevant clip for each,
@@ -83,9 +95,9 @@ def get_clips_for_script(
         # Percentage of total duration this sentence takes
         sent_duration = (sent_words / total_words) * total_duration
         
-        # Define a keyword (first 4 words or search-friendly phrase)
-        # In a real app we'd use NLP here, but for now we'll use the sentence snippet.
-        keyword = " ".join(sentence.split()[:5])
+        # Combine base keyword with a snippet of the sentence
+        snippet = " ".join(sentence.split()[:3])
+        keyword = f"{base_keyword} {snippet}".strip()
         
         logger.info("Fetching clip for segment %d: '%s' (%.1fs)", i+1, keyword, sent_duration)
         

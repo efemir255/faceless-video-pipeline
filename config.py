@@ -80,6 +80,10 @@ BROWSER_USER_DATA_DIR = str(PROJECT_ROOT / ".browser_profile")
 # Timeout (ms) for Playwright actions (navigation, clicks, uploads, etc.)
 PLAYWRIGHT_TIMEOUT_MS = 120_000  # 2 minutes
 
+# Run Playwright in headless mode? (True/False)
+# HEADLESS_BROWSER=true/false in .env
+HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "false").lower() == "true"
+
 # ─── Platform URLs ───────────────────────────────────────────────────────
 YOUTUBE_STUDIO_UPLOAD_URL = "https://studio.youtube.com"
 TIKTOK_UPLOAD_URL = "https://www.tiktok.com/creator#/upload?scene=creator_center"

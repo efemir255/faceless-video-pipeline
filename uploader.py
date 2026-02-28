@@ -34,6 +34,7 @@ from config import ( # type: ignore
     PLAYWRIGHT_TIMEOUT_MS,
     YOUTUBE_STUDIO_UPLOAD_URL,
     TIKTOK_UPLOAD_URL,
+    HEADLESS_BROWSER,
 )
 
 
@@ -61,7 +62,7 @@ def _get_browser_context(playwright):
 
     context = playwright.chromium.launch_persistent_context(
         user_data_dir=BROWSER_USER_DATA_DIR,
-        headless=False,
+        headless=HEADLESS_BROWSER,
         args=[
             "--disable-blink-features=AutomationControlled",
             "--no-first-run",
@@ -166,7 +167,7 @@ def _upload_youtube(
         time.sleep(3)
 
         # 2 & 3 — Open Upload Dialog
-        print("DEBUG: Looking for Upload/Create button...")
+        logger.debug("Looking for Upload/Create button...")
         
         upload_icon = page.locator("#upload-icon, ytcp-button#upload-icon, ytcp-icon-button#upload-icon").first
         create_btn = page.locator("#create-icon, ytcp-button#create-icon, ytcp-icon-button#create-icon").first
@@ -175,20 +176,20 @@ def _upload_youtube(
             # 1. Try clicking the direct "Upload" icon (arrow up)
             upload_icon.wait_for(state="visible", timeout=10_000)
             upload_icon.click()
-            print("DEBUG: Clicked direct '#upload-icon'.")
+            logger.debug("Clicked direct '#upload-icon'.")
         except Exception:
-            print("DEBUG: '#upload-icon' not visible, trying '#create-icon' dropdown...")
+            logger.debug("'#upload-icon' not visible, trying '#create-icon' dropdown...")
             try:
                 # 2. Fallback to "Create" button -> "Upload videos"
                 create_btn.wait_for(state="visible", timeout=20_000)
                 create_btn.click()
-                print("DEBUG: Clicked 'Create' button.")
+                logger.debug("Clicked 'Create' button.")
                 time.sleep(1)
                 
                 upload_menu_item = page.locator("tp-yt-paper-item:has-text('Upload videos'), #text-item-0").first
                 upload_menu_item.wait_for(state="visible", timeout=10_000)
                 upload_menu_item.click()
-                print("DEBUG: Clicked 'Upload videos' menu item.")
+                logger.debug("Clicked 'Upload videos' menu item.")
             except Exception as e:
                 logger.error("Failed to open upload dialog: %s", e)
                 raise
@@ -219,7 +220,7 @@ def _upload_youtube(
         title_box.click(click_count=3)
         page.keyboard.press("Backspace")
         title_box.fill(title)
-        print(f"DEBUG: Filled title: {title}")
+        logger.debug("Filled title: %s", title)
 
         # 6 — Fill in description
         # BUG FIX: Handle the description box more reliably
@@ -228,13 +229,13 @@ def _upload_youtube(
             desc_box.wait_for(state="visible", timeout=15_000)
             desc_box.click()
             desc_box.fill(description)
-            print("DEBUG: Filled description.")
+            logger.debug("Filled description.")
         except Exception as e:
-            print(f"DEBUG_WARNING: Could not fill description: {e}")
+            logger.warning("Could not fill description: %s", e)
 
         # 7 — Set "Not made for kids" (REQUIRED)
         # BUG FIX: This is critical. Use text-based and name-based selectors.
-        print("DEBUG: Setting 'Not made for kids'...")
+        logger.debug("Setting 'Not made for kids'...")
         kids_selectors = [
             "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']",
             "tp-yt-paper-radio-button:has-text('No, it\\'s not made for kids')",
@@ -246,21 +247,21 @@ def _upload_youtube(
             not_for_kids.scroll_into_view_if_needed()
             not_for_kids.wait_for(state="visible", timeout=10_000)
             not_for_kids.click()
-            print("DEBUG: Selected 'Not made for kids'.")
+            logger.debug("Selected 'Not made for kids'.")
         except Exception as e:
-            print(f"DEBUG_ERROR: Could not click 'Not made for kids': {e}")
+            logger.error("Could not click 'Not made for kids': %s", e)
 
         # 8 — Click through Next until "Visibility" step
-        print("DEBUG: Clicking Next buttons...")
+        logger.debug("Clicking Next buttons...")
         for step in range(3):
             next_btn = page.locator("#next-button, ytcp-button#next-button").first
             next_btn.wait_for(state="visible", timeout=15_000)
             next_btn.click()
-            print(f"DEBUG: Clicked Next ({step + 1}/3)")
+            logger.debug("Clicked Next (%d/3)", step + 1)
             time.sleep(2)
 
         # 9 — Select "Public" (Visibility)
-        print("DEBUG: Setting visibility to Public...")
+        logger.debug("Setting visibility to Public...")
         visibility_selectors = [
             "tp-yt-paper-radio-button[name='PUBLIC']",
             "tp-yt-paper-radio-button:has-text('Public')",
@@ -271,9 +272,9 @@ def _upload_youtube(
         try:
             public_radio.wait_for(state="visible", timeout=15_000)
             public_radio.click()
-            print("DEBUG: Selected 'Public' visibility.")
+            logger.debug("Selected 'Public' visibility.")
         except Exception as e:
-            print(f"DEBUG_ERROR: Could not select Public: {e}")
+            logger.error("Could not select Public: %s", e)
 
         time.sleep(1)
 
