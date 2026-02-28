@@ -85,16 +85,27 @@ def render_final_video(
             logger=None,
         )
 
-        return str(output_path.resolve())
+        final_path = str(output_path.resolve())
+        # Close explicitly before returning
+        final_clip.close()
+        final_video.close()
+
+        return final_path
 
     except Exception as exc:
         logger.error("Video rendering failed: %s", exc)
         raise
     finally:
         if audio_clip:
-            audio_clip.close()
+            try:
+                audio_clip.close()
+            except Exception:
+                pass
         for clip in clips_to_close:
-            clip.close()
+            try:
+                clip.close()
+            except Exception:
+                pass
             
     return ""  # Should not be reached due to raise in except
 

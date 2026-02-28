@@ -71,6 +71,7 @@ _DEFAULTS = {
     "last_title": "",
     "last_description": "",
     "last_script": "",
+    "seen_reddit_ids": set(),
 }
 
 for key, val in _DEFAULTS.items():
@@ -118,9 +119,25 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("Pexels API Key")
+    st.subheader("🧹 Maintenance")
+    if st.button("🗑️ Clear Cache", use_container_width=True, help="Delete all temporary audio and video files"):
+        count = 0
+        for directory in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
+            if directory.exists():
+                for f in directory.iterdir():
+                    if f.is_file():
+                        try:
+                            f.unlink()
+                            count += 1
+                        except Exception:
+                            pass
+        st.toast(f"Cleared {count} files.")
+        st.rerun()
+
+    st.divider()
+    st.subheader("🔑 API Keys")
     st.caption(
-        "Set the `PEXELS_API_KEY` in your `.env` file (see `.env.example`)."
+        "Set your API keys in the `.env` file (see `.env.example`)."
     )
 
 
@@ -144,9 +161,13 @@ with st.expander("🤖 Source Content from Reddit"):
     with col_red2:
         if st.button("🔍 Fetch Story", use_container_width=True):
             with st.spinner("Fetching from Reddit..."):
-                story = get_reddit_story(reddit_category)
+                story = get_reddit_story(
+                    reddit_category,
+                    seen_ids=st.session_state.seen_reddit_ids
+                )
                 if story:
                     st.session_state["reddit_story"] = story
+                    st.session_state.seen_reddit_ids.add(story["id"])
                     st.success(f"Fetched: {story['title']}")
                 else:
                     st.error("Could not fetch a suitable story. Check credentials or filters.")
@@ -229,6 +250,7 @@ def _run_generate(script: str, kw: str) -> None:
     st.session_state.final_video_path = final_path
 
     progress.progress(100, text="✅ Video connected to story!")
+    st.balloons()
 
 
 if generate_btn:
@@ -299,6 +321,7 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         for platform, ok in results.items():
                             if ok:
                                 st.success(f"✅ {platform.title()} upload succeeded!")
+                                st.snow()
                             else:
                                 st.error(
                                     f"❌ {platform.title()} upload failed. "

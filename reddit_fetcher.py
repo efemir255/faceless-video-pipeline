@@ -28,13 +28,17 @@ SUBREDDITS = {
     "interesting": ["AskReddit", "unpopularopinion", "todayilearned"]
 }
 
-def get_reddit_story(category: str = "interesting"):
+def get_reddit_story(category: str = "interesting", seen_ids: set | None = None):
     """
     Fetch a filtered story from the specified category.
+    Avoids stories in seen_ids.
     """
     if not all([REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET]):
         logger.warning("Reddit API credentials missing.")
         return None
+
+    if seen_ids is None:
+        seen_ids = set()
 
     # Select a random subreddit from the list for the category
     category_list = SUBREDDITS.get(category.lower(), ["AskReddit"])
@@ -53,7 +57,7 @@ def get_reddit_story(category: str = "interesting"):
         random.shuffle(posts)
 
         for post in posts:
-            if post.stickied or post.over_18:
+            if post.stickied or post.over_18 or post.id in seen_ids:
                 continue
 
             # Get content: use selftext, or if it's AskReddit, get the top comment
@@ -88,6 +92,7 @@ def get_reddit_story(category: str = "interesting"):
 
             logger.info("Fetched story from r/%s: %s", subreddit_name, story_title)
             return {
+                "id": post.id,
                 "title": story_title,
                 "text": story_text,
                 "url": post.url,
