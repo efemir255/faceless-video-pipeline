@@ -30,7 +30,8 @@ def run_auto_pipeline(category: str, platforms: list[str]):
 
     script = f"{story['title']}. {story['text']}"
     title = story['title']
-    description = f"Reddit Story from r/{category}\n\n#reddit #story #shorts"
+    subreddit = story.get('subreddit', category)
+    description = f"Story from r/{subreddit}\n\n#reddit #story #shorts"
 
     try:
         # 2. TTS
