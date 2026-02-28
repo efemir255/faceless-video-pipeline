@@ -23,8 +23,8 @@ FORBIDDEN_KEYWORDS = [
 ]
 
 SUBREDDITS = {
-    "scary": ["shortscarystories", "nosleep", "creepy"],
-    "funny": ["tifu", "funny", "humor"],
+    "scary": ["shortscarystories", "nosleep"],
+    "funny": ["tifu", "confessions", "stories"],
     "interesting": ["AskReddit", "unpopularopinion", "todayilearned"]
 }
 
@@ -57,7 +57,16 @@ def get_reddit_story(category: str = "interesting", seen_ids: set | None = None)
         random.shuffle(posts)
 
         for post in posts:
+            # Basic validation
             if post.stickied or post.over_18 or post.id in seen_ids:
+                continue
+
+            # Ensure it's a text-based post or an AskReddit thread we can pull comments from
+            # Filter out videos, images, and external links
+            if not post.is_self and subreddit_name.lower() != "askreddit":
+                continue
+
+            if post.is_video:
                 continue
 
             # Get content: use selftext, or if it's AskReddit, get the top comment
@@ -87,7 +96,11 @@ def get_reddit_story(category: str = "interesting", seen_ids: set | None = None)
 
             # Length check for Shorts (approx 100-150 words)
             word_count = len(story_text.split())
-            if word_count < 50 or word_count > 200:
+            if word_count < 60 or word_count > 250:
+                continue
+
+            # Story heuristic: stories usually have multiple sentences and paragraphs
+            if story_text.count(".") < 3:
                 continue
 
             logger.info("Fetched story from r/%s: %s", subreddit_name, story_title)
