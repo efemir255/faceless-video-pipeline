@@ -1,0 +1,25 @@
+# ─── Secrets ─────────────────────────────────────────────────────────────
+.env
+
+# ─── Generated output ───────────────────────────────────────────────────
+output/
+
+# ─── Playwright persistent browser profile ──────────────────────────────
+.browser_profile/
+
+# ─── Python cache / environments ────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+venv/
+faceless_env/
+
+# ─── IDE / OS ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

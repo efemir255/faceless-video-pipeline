@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faceless-video-pipeline"
+version = "0.1.0"
+description = "AI-powered faceless video generation and uploading pipeline"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "edge-tts>=6.1.0",
+    "mutagen>=1.47.0",
+    "moviepy>=2.2.1",
+    "requests>=2.31.0",
+    "streamlit>=1.30.0",
+    "playwright>=1.40.0",
+    "Pillow>=10.0.0",
+    "python-dotenv>=1.0.0",
+    "nest-asyncio>=1.5.0",
+]
+
+[tool.setuptools]
+py-modules = ["config", "tts_engine", "video_fetcher", "video_engine", "uploader", "app"]
+
