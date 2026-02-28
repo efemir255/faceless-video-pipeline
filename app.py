@@ -36,6 +36,7 @@ from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script, get_background_video
 from video_engine import render_final_video
 from uploader import upload_video, manual_login
+from reddit_fetcher import get_reddit_story
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,34 @@ with st.sidebar:
 st.title("🎬 Faceless Video Pipeline")
 st.write("Generate, review, and upload AI videos to YouTube Shorts & TikTok.")
 
+# ── Reddit Content Sourcing ──────────────────────────────────────────────
+
+with st.expander("🤖 Source Content from Reddit"):
+    col_red1, col_red2 = st.columns([2, 1])
+    with col_red1:
+        reddit_category = st.selectbox(
+            "Select Story Category",
+            ["Interesting", "Funny", "Scary"],
+            index=0
+        )
+    with col_red2:
+        if st.button("🔍 Fetch Story", use_container_width=True):
+            with st.spinner("Fetching from Reddit..."):
+                story = get_reddit_story(reddit_category)
+                if story:
+                    st.session_state["reddit_story"] = story
+                    st.success(f"Fetched: {story['title']}")
+                else:
+                    st.error("Could not fetch a suitable story. Check credentials or filters.")
+
+    if "reddit_story" in st.session_state:
+        story = st.session_state["reddit_story"]
+        if st.button("📝 Use this Story", use_container_width=True):
+            st.session_state.last_script = story["text"]
+            st.session_state.last_title = story["title"]
+            # We use st.rerun() to populate the form fields in the next run
+            st.rerun()
+
 # ── Input form ───────────────────────────────────────────────────────────
 
 with st.form("video_form"):
@@ -137,14 +166,17 @@ with st.form("video_form"):
         "📝 Video Script",
         height=180,
         placeholder="Paste your narration script here…",
+        value=st.session_state.last_script if "reddit_story" in st.session_state else ""
     )
     keyword = st.text_input(
         "🔍 Background Keyword",
         placeholder='e.g. "ocean waves", "city night", "forest"',
+        value=st.session_state.last_keyword
     )
     video_title = st.text_input(
         "🏷️ Video Title",
         placeholder="Title for YouTube / TikTok",
+        value=st.session_state.last_title if "reddit_story" in st.session_state else ""
     )
     video_description = st.text_area(
         "📄 Video Description",

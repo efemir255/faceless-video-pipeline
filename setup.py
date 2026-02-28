@@ -16,5 +16,6 @@ setup(
         "python-dotenv>=1.0.0",
         "nest-asyncio>=1.5.0",
         "setuptools>=61.0",
+        "praw>=7.7.1",
     ],
 )

@@ -80,6 +80,12 @@ BROWSER_USER_DATA_DIR = str(PROJECT_ROOT / ".browser_profile")
 # Timeout (ms) for Playwright actions (navigation, clicks, uploads, etc.)
 PLAYWRIGHT_TIMEOUT_MS = 120_000  # 2 minutes
 
+# ─── Reddit API ──────────────────────────────────────────────────────────
+# Get a key at https://www.reddit.com/prefs/apps
+REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID", "")
+REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET", "")
+REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "FacelessVideoPipeline/0.1.0")
+
 # Run Playwright in headless mode? (True/False)
 # HEADLESS_BROWSER=true/false in .env
 HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "false").lower() == "true"

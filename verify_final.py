@@ -20,7 +20,9 @@ modules = [
     "tts_engine",
     "video_fetcher",
     "video_engine",
-    "uploader"
+    "uploader",
+    "reddit_fetcher",
+    "praw"
 ]
 
 failed = []
