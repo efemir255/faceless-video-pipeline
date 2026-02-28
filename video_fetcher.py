@@ -10,6 +10,7 @@ returned — ``video_engine.py`` will loop it to fit.
 import logging
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
@@ -74,61 +75,72 @@ def get_background_video(
     return str(output_path.resolve())
 
 
+def _fetch_single_clip(i: int, keyword: str, sent_duration: float) -> dict:
+    """Helper for parallel fetching."""
+    try:
+        filename = f"clip_{i:03d}.mp4"
+        path = VIDEO_DIR / filename
+        clip_path = get_background_video(keyword, sent_duration, output_path=path)
+        return {"path": clip_path, "duration": sent_duration, "index": i}
+    except Exception as exc:
+        logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
+        # Fallback to a generic keyword
+        filename = f"clip_{i:03d}.mp4"
+        path = VIDEO_DIR / filename
+        try:
+            clip_path = get_background_video("nature", sent_duration, output_path=path)
+            return {"path": clip_path, "duration": sent_duration, "index": i}
+        except Exception as fallback_exc:
+            logger.error("Absolute fallback failed for clip %d: %s", i, fallback_exc)
+            raise
+
+
 def get_clips_for_script(
     script: str,
     total_duration: float,
     base_keyword: str = "nature",
 ) -> list[dict]:
     """
-    Split script into segments, fetch a relevant clip for each,
+    Split script into segments, fetch a relevant clip for each in parallel,
     and return a list of (path, duration) dicts.
     """
     # ── 1. Split script into segments ──
-    # Split by period, exclamation, or question mark using regex
-    # Handle common abbreviations to avoid splitting prematurely
     raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
     sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
 
     if not sentences:
         sentences = [script.strip()]
 
-    # Estimate duration per sentence (simple word count ratio)
+    # Estimate duration per sentence
     words = script.split()
     total_words = len(words)
-    clips_metadata = []
 
+    tasks = []
     for i, sentence in enumerate(sentences):
         sent_words = len(sentence.split())
-        # Percentage of total duration this sentence takes
         sent_duration = (sent_words / total_words) * total_duration
         
-        # Combine base keyword with a snippet of the sentence
         snippet = " ".join(sentence.split()[:3])
         keyword = f"{base_keyword} {snippet}".strip()
-        
-        logger.info("Fetching clip for segment %d: '%s' (%.1fs)", i+1, keyword, sent_duration)
-        
-        try:
-            filename = f"clip_{i:03d}.mp4"
-            path = VIDEO_DIR / filename
-            clip_path = get_background_video(keyword, sent_duration, output_path=path)
-            clips_metadata.append({
-                "path": clip_path,
-                "duration": sent_duration
-            })
-        except Exception as exc:
-            logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
-            # Fallback to a generic keyword if specific one fails
-            if i > 0 and clips_metadata:
-                # Reuse previous clip metadata if possible (it will be looped in engine)
-                clips_metadata.append(clips_metadata[-1])
-            else:
-                # Absolute fallback
-                path = VIDEO_DIR / f"clip_{i:03d}.mp4"
-                clip_path = get_background_video("nature", sent_duration, output_path=path)
-                clips_metadata.append({"path": clip_path, "duration": sent_duration})
+        tasks.append((i, keyword, sent_duration))
 
-    return clips_metadata
+    # Fetch in parallel
+    logger.info("Fetching %d clips in parallel...", len(tasks))
+    results = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [executor.submit(_fetch_single_clip, *task) for task in tasks]
+        for future in futures:
+            try:
+                results.append(future.result())
+            except Exception as e:
+                logger.error("Parallel fetch task failed: %s", e)
+
+    # Re-sort by original index and remove index key
+    results.sort(key=lambda x: x["index"])
+    for r in results:
+        r.pop("index")
+
+    return results
 
 
 def _download_file(url: str, output_path: Path) -> None:

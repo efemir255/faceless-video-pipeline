@@ -80,7 +80,7 @@ def render_final_video(
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
+            preset="ultrafast",
             threads=4,
             logger=None,
         )
