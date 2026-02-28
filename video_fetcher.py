@@ -162,15 +162,27 @@ def get_clips_for_script(
     return clips_metadata
 
 
-def _download_file(url: str, output_path: Path) -> None:
-    """Helper to download a file with temp-rename protection."""
-    dl_resp = _session.get(url, stream=True, timeout=120)
-    dl_resp.raise_for_status()
+import time
 
-    tmp_path = output_path.with_suffix(".tmp")
-    with open(tmp_path, "wb") as fh:
-        for chunk in dl_resp.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                fh.write(chunk)
-    
-    tmp_path.replace(output_path)
+def _download_file(url: str, output_path: Path) -> None:
+    """Helper to download a file with temp-rename protection and retries."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            dl_resp = _session.get(url, stream=True, timeout=120)
+            dl_resp.raise_for_status()
+
+            tmp_path = output_path.with_suffix(".tmp")
+            with open(tmp_path, "wb") as fh:
+                for chunk in dl_resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        fh.write(chunk)
+
+            tmp_path.replace(output_path)
+            return
+        except Exception as e:
+            if attempt == max_retries - 1:
+                logger.error("Failed to download %s after %d attempts: %s", url, max_retries, e)
+                raise
+            logger.warning("Download attempt %d failed for %s: %s. Retrying...", attempt + 1, url, e)
+            time.sleep(2 ** attempt)
