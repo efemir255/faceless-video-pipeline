@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Check for virtual environment and activate if it exists
+if [ -d .venv ]; then
+    echo "Activating virtual environment (.venv)..."
+    source .venv/bin/activate
+elif [ -d venv ]; then
+    echo "Activating virtual environment (venv)..."
+    source venv/bin/activate
+fi
+
 # Check if .env exists, if not copy from .env.example
 if [ ! -f .env ]; then
     if [ -f .env.example ]; then

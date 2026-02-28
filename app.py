@@ -238,19 +238,22 @@ def _run_generate(script: str, kw: str) -> None:
     audio_path, duration = generate_audio(script)
     st.session_state.audio_path = audio_path
     st.session_state.audio_duration = duration
+    st.toast("TTS Audio generated!", icon="🎙️")
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
     clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
     st.session_state.video_path = clips_metadata  # Store the list of clips
+    st.toast("Clips fetched from Pexels!", icon="🎥")
 
     # Step 3 — Render
     progress.progress(70, text="🔧 Stitching and rendering final video…")
     final_path = render_final_video(audio_path, clips_metadata)
     st.session_state.final_video_path = final_path
 
-    progress.progress(100, text="✅ Video connected to story!")
+    progress.progress(100, text="✅ Video generated!")
     st.balloons()
+    st.toast("Rendering complete! Ready for preview.", icon="✅")
 
 
 if generate_btn:
@@ -295,6 +298,7 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
     # ── Approve & Upload ─────────────────────────────────────────────
     with col1:
         if st.button("✅ Approve & Upload", use_container_width=True, type="primary"):
+            st.toast("Starting upload process...", icon="🚀")
             platforms = []
             if st.session_state.upload_youtube:
                 platforms.append("youtube")

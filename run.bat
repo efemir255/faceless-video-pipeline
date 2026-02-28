@@ -1,5 +1,14 @@
 @echo off
 
+rem Check for virtual environment and activate if it exists
+if exist .venv\Scripts\activate.bat (
+    echo Activating virtual environment (.venv)...
+    call .venv\Scripts\activate.bat
+) else if exist venv\Scripts\activate.bat (
+    echo Activating virtual environment (venv)...
+    call venv\Scripts\activate.bat
+)
+
 rem Check if .env exists, if not copy from .env.example
 if not exist .env (
     if exist .env.example (

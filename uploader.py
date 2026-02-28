@@ -215,8 +215,13 @@ def _upload_youtube(
             return False
 
         # 5 — Fill in title
-        # BUG FIX: Use more robust title selectors
-        title_box = page.locator("#title-textarea #textbox, #textbox[aria-label='Add a title that describes your video']").first
+        # BUG FIX: Use more robust title selectors including multi-strategy ARIA labels
+        title_box = page.locator(
+            "#title-textarea #textbox, "
+            "#textbox[aria-label*='title'], "
+            "#textbox[aria-label='Add a title that describes your video'], "
+            "ytcp-social-suggestion-textarea#title-textarea #textbox"
+        ).first
         title_box.wait_for(state="visible", timeout=20_000)
         title_box.click(click_count=3)
         page.keyboard.press("Backspace")
@@ -224,8 +229,13 @@ def _upload_youtube(
         logger.debug("Filled title: %s", title)
 
         # 6 — Fill in description
-        # BUG FIX: Handle the description box more reliably
-        desc_box = page.locator("#description-textarea #textbox, #textbox[aria-label='Tell viewers about your video']").first
+        # BUG FIX: Handle the description box more reliably with multi-strategy selectors
+        desc_box = page.locator(
+            "#description-textarea #textbox, "
+            "#textbox[aria-label*='Tell viewers'], "
+            "#textbox[aria-label='Tell viewers about your video'], "
+            "ytcp-social-suggestion-textarea#description-textarea #textbox"
+        ).first
         try:
             desc_box.wait_for(state="visible", timeout=15_000)
             desc_box.click()
@@ -396,7 +406,12 @@ def _upload_tiktok(
         time.sleep(2)
 
         # 4 — Post
-        post_btn = page.locator('button:has-text("Post")')
+        # Use more robust selector for Post button (could be text or specific classes)
+        post_btn = page.locator(
+            'button:has-text("Post"), '
+            '[data-e2e="post-button"], '
+            '.upload-btn-button'
+        ).first
         post_btn.wait_for(state="visible", timeout=15_000)
         post_btn.click()
 
