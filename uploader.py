@@ -524,14 +524,25 @@ def upload_video(
                 results[platform] = False
                 continue
             
-            logger.info("Starting upload flow for %s...", platform.upper())
-            try:
-                # We pass the shared page instance so we don't crash 
-                # opening/closing targets on Windows.
-                results[platform] = fn(page, video_path, title, description)
-            except Exception as exc:
-                logger.error("%s dispatcher failed: %s", platform.upper(), exc)
-                results[platform] = False
+            # Implementation of simple retry loop for uploads
+            max_attempts = 2
+            success = False
+            for attempt in range(max_attempts):
+                logger.info("Starting upload flow for %s (attempt %d/%d)...",
+                            platform.upper(), attempt + 1, max_attempts)
+                try:
+                    success = fn(page, video_path, title, description)
+                    if success:
+                        break
+                    logger.warning("%s upload attempt %d failed.", platform.upper(), attempt + 1)
+                except Exception as exc:
+                    logger.error("%s dispatcher attempt %d failed: %s",
+                                 platform.upper(), attempt + 1, exc)
+
+                if attempt < max_attempts - 1:
+                    time.sleep(10) # Wait before retry
+
+            results[platform] = success
 
         ctx.close()
 

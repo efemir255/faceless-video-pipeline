@@ -14,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import requests
+from urllib3.util import Retry
+from requests.adapters import HTTPAdapter
 
 from config import PEXELS_API_KEY, VIDEO_DIR
 
@@ -21,8 +23,10 @@ logger = logging.getLogger(__name__)
 
 _PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 
-# Shared requests session for performance and connection pooling
+# Shared requests session with automatic retries for stability
 _session = requests.Session()
+_retries = Retry(total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
+_session.mount("https://", HTTPAdapter(max_retries=_retries))
 
 
 def get_background_video(
@@ -75,6 +79,16 @@ def get_background_video(
     return str(output_path.resolve())
 
 
+def split_script_into_sentences(script: str) -> list[str]:
+    """Split script into a list of sentences/segments for video processing."""
+    raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
+    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
+
+    if not sentences:
+        sentences = [script.strip()]
+    return sentences
+
+
 def get_clips_for_script(
     script: str,
     total_duration: float,
@@ -85,11 +99,7 @@ def get_clips_for_script(
     and return a list of (path, duration) dicts.
     """
     # ── 1. Split script into segments ──
-    raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
-    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
-
-    if not sentences:
-        sentences = [script.strip()]
+    sentences = split_script_into_sentences(script)
 
     # Recalculate word counts based only on sentences we actually use
     all_sentence_words = [len(s.split()) for s in sentences]
@@ -99,12 +109,18 @@ def get_clips_for_script(
 
     # List of (keyword, duration, output_path) tasks
     tasks = []
+    # Common words to filter out for cleaner keywords
+    stop_words = {"the", "and", "a", "an", "is", "are", "of", "to", "in", "it", "that", "this", "for", "with", "as", "at"}
+
     for i, sentence in enumerate(sentences):
         sent_words = all_sentence_words[i]
         # Percentage of total duration this sentence takes
         sent_duration = (sent_words / total_sentence_words) * total_duration
         
-        snippet = " ".join(sentence.split()[:3])
+        # Refine keyword: remove punctuation and filter stop words
+        clean_words = [w.lower() for w in re.findall(r'\b\w+\b', sentence) if w.lower() not in stop_words]
+        snippet = " ".join(clean_words[:3])
+
         keyword = f"{base_keyword} {snippet}".strip()
         path = VIDEO_DIR / f"clip_{i:03d}.mp4"
         

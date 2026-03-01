@@ -1,10 +1,21 @@
 import sys
 import os
 import importlib
+import subprocess
 from pathlib import Path
 
 print("Python executable:", sys.executable)
 print("Current working directory:", os.getcwd())
+
+# Check for FFmpeg (required by MoviePy)
+try:
+    res = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+    if res.returncode == 0:
+        print("SUCCESS: FFmpeg is installed and accessible.")
+    else:
+        print("WARNING: FFmpeg found but returned non-zero exit code.")
+except FileNotFoundError:
+    print("ERROR: FFmpeg is NOT installed or NOT in system PATH. Video rendering will fail.")
 
 # Add root to sys.path for this script
 root = str(Path(__file__).resolve().parent)

@@ -91,7 +91,7 @@ def render_final_video(
             codec="libx264",
             audio_codec="aac",
             preset="ultrafast",
-            threads=4,
+            threads=8,  # Increased threads for multi-core performance
             logger=None,
         )
 
