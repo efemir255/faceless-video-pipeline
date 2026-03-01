@@ -6,6 +6,7 @@ the audio duration, and exporting a ready-to-upload MP4.
 """
 
 import logging
+import random
 from pathlib import Path
 
 from moviepy import (
@@ -56,7 +57,9 @@ def render_final_video(
             # Multi-clip mode
             video_clips = []
             for item in video_source:
-                clip = _prepare_clip(item["path"], item["duration"])
+                # Add support for random start offset for longer built-in videos
+                random_start = item.get("random_start", False)
+                clip = _prepare_clip(item["path"], item["duration"], random_start=random_start)
                 video_clips.append(clip)
         
         clips_to_close.extend(video_clips)
@@ -110,16 +113,21 @@ def render_final_video(
     return ""  # Should not be reached due to raise in except
 
 
-def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
+def _prepare_clip(path: str | Path, target_duration: float, random_start: bool = False) -> VideoFileClip:
     """Load, resize, and loop/trim a clip to match target duration."""
     clip = VideoFileClip(str(path))
     
-    # 1. Loop if shorter than target
+    # 1. Pick a random start if requested and video is long enough
+    start_time = 0
+    if random_start and clip.duration > target_duration:
+        start_time = random.uniform(0, clip.duration - target_duration)
+
+    # 2. Loop if shorter than target
     if clip.duration < target_duration:
         clip = clip.with_effects([vfx.Loop(duration=target_duration)])
     
-    # 2. Trim to target
-    clip = clip.subclipped(0, target_duration)
+    # 3. Trim to target
+    clip = clip.subclipped(start_time, start_time + target_duration)
     
     # 3. Resize and crop (Cover strategy: ensure 1080x1920 is fully filled)
     w, h = clip.w, clip.h

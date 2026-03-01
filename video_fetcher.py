@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from config import PEXELS_API_KEY, VIDEO_DIR
+from config import PEXELS_API_KEY, VIDEO_DIR, VIDEO_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +78,22 @@ def get_clips_for_script(
     script: str,
     total_duration: float,
     base_keyword: str = "nature",
+    source_type: str = "pexels",
+    category: str | None = None,
 ) -> list[dict]:
     """
     Split script into segments, fetch a relevant clip for each,
     and return a list of (path, duration) dicts.
     """
+    # If source_type is 'builtin', use the category mapped keyword or local file
+    builtin_path = None
+    if source_type == "builtin" and category in VIDEO_CATEGORIES:
+        val = VIDEO_CATEGORIES[category]
+        if val.endswith(".mp4") and Path(val).exists():
+            builtin_path = val
+        else:
+            base_keyword = val  # Use the category keyword for Pexels
+
     # ── 1. Split script into segments ──
     # Split by period, exclamation, or question mark using regex
     # Handle common abbreviations to avoid splitting prematurely
@@ -111,11 +122,22 @@ def get_clips_for_script(
         try:
             filename = f"clip_{i:03d}.mp4"
             path = VIDEO_DIR / filename
-            clip_path = get_background_video(keyword, sent_duration, output_path=path)
-            clips_metadata.append({
-                "path": clip_path,
-                "duration": sent_duration
-            })
+
+            if builtin_path:
+                # Use the local file for all segments, but wrap in a dict
+                # that tells the engine to pick a random subclip
+                clip_path = builtin_path
+                clips_metadata.append({
+                    "path": clip_path,
+                    "duration": sent_duration,
+                    "random_start": True
+                })
+            else:
+                clip_path = get_background_video(keyword, sent_duration, output_path=path)
+                clips_metadata.append({
+                    "path": clip_path,
+                    "duration": sent_duration
+                })
         except Exception as exc:
             logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
             # Fallback to a generic keyword if specific one fails
