@@ -92,10 +92,10 @@ def get_clips_for_script(
         if category not in VIDEO_CATEGORIES:
             raise RuntimeError(f"Unknown built-in category '{category}'")
         val = VIDEO_CATEGORIES[category]
-        # if the mapping points to a local file, just return it with full duration
+        # If the mapping points to a local file, use it for the entire duration
         if isinstance(val, str) and Path(val).is_file():
             return [{"path": str(Path(val).resolve()), "duration": total_duration, "random_start": True}]
-        # otherwise treat value as keyword for Pexels search
+        # Otherwise treat value as keyword for Pexels search
         base_keyword = val
 
     # ── 1. Split script into segments ──
@@ -112,34 +112,33 @@ def get_clips_for_script(
     total_words = len(words)
     clips_metadata = []
 
+    # If user provided a list of video paths (advanced/manual mode), use them directly
+    if isinstance(base_keyword, list):
+        # Use each video in the list for each segment
+        for i, sentence in enumerate(sentences):
+            sent_words = len(sentence.split())
+            sent_duration = (sent_words / max(1, total_words)) * total_duration
+            video_path = base_keyword[i % len(base_keyword)]
+            clips_metadata.append({"path": video_path, "duration": sent_duration})
+        return clips_metadata
+
     for i, sentence in enumerate(sentences):
         sent_words = len(sentence.split())
-        # Percentage of total duration this sentence takes
-        # BUG FIX: Prevent ZeroDivisionError if script is empty or whitespace only
         sent_duration = (sent_words / max(1, total_words)) * total_duration
-        
-        # Combine base keyword with a snippet of the sentence
         snippet = " ".join(sentence.split()[:3])
         keyword = f"{base_keyword} {snippet}".strip()
-        
         logger.info("Fetching clip for segment %d: '%s' (%.1fs)", i+1, keyword, sent_duration)
-        
         try:
             filename = f"clip_{i:03d}.mp4"
             path = VIDEO_DIR / filename
             clip_path = get_background_video(keyword, sent_duration, output_path=path)
-            clips_metadata.append({
-                "path": clip_path,
-                "duration": sent_duration
-            })
+            clips_metadata.append({"path": clip_path, "duration": sent_duration})
         except Exception as exc:
             logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
             # Fallback to a generic keyword if specific one fails
             if i > 0 and clips_metadata:
-                # Reuse previous clip metadata if possible (it will be looped in engine)
                 clips_metadata.append(clips_metadata[-1])
             else:
-                # Absolute fallback
                 path = VIDEO_DIR / f"clip_{i:03d}.mp4"
                 clip_path = get_background_video("nature", sent_duration, output_path=path)
                 clips_metadata.append({"path": clip_path, "duration": sent_duration})
