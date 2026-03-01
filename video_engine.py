@@ -42,6 +42,8 @@ def render_final_video(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     audio_clip = None
+    final_video = None
+    final_clip = None
     clips_to_close = []
 
     try:
@@ -63,7 +65,8 @@ def render_final_video(
 
         # Stitch clips together
         logger.info("Stitching %d clips...", len(video_clips))
-        final_video = concatenate_videoclips(video_clips, method="compose")
+        # method="chain" is faster and more stable for identical-size clips
+        final_video = concatenate_videoclips(video_clips, method="chain")
         
         # Ensure it matches audio duration exactly (trim/loop last bit if needed)
         if final_video.duration > audio_duration:
@@ -75,27 +78,100 @@ def render_final_video(
         final_clip = final_video.with_audio(audio_clip)
         
         logger.info("Rendering final video → %s", output_path.name)
+
+        # Write to a temp file first, then atomically move into place. This
+        # avoids producing a truncated/uncorrupted final file if the write
+        # is interrupted. Also request the moov atom to be moved to the
+        # start of the file (faststart) for better streaming compatibility.
+        temp_path = output_path.with_suffix(".part.mp4")
+
+        # Pass ffmpeg params to ensure faststart
+        ffmpeg_params = ["-movflags", "+faststart"]
+
         final_clip.write_videofile(
-            str(output_path),
+            str(temp_path),
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
+            preset="ultrafast",
             threads=4,
+            ffmpeg_params=ffmpeg_params,
             logger=None,
         )
 
-        final_path = str(output_path.resolve())
-        # Close explicitly before returning
-        final_clip.close()
-        final_video.close()
+        # Post-write verification: use ffmpeg (bundled via imageio-ffmpeg)
+        # if available to validate the container. If validation fails,
+        # attempt a remux to recover the container; if that fails, raise
+        # an exception so the caller can retry or re-render.
+        try:
+            import imageio_ffmpeg as iioff
+            ffmpeg_exe = iioff.get_ffmpeg_exe()
+        except Exception:
+            ffmpeg_exe = None
 
-        return final_path
+        def _verify(path):
+            if ffmpeg_exe:
+                import subprocess
+                res = subprocess.run([ffmpeg_exe, "-v", "error", "-i", str(path), "-f", "null", "-"], capture_output=True, text=True)
+                return res.returncode == 0 and not res.stderr
+            else:
+                # Fallback: try loading with moviepy
+                try:
+                    from moviepy.video.io.VideoFileClip import VideoFileClip as _V
+                    c = _V(str(path))
+                    c.close()
+                    return True
+                except Exception:
+                    return False
+
+        ok = _verify(temp_path)
+        if not ok and ffmpeg_exe:
+            # Try remuxing to recover the moov atom
+            remuxed = output_path.with_name(output_path.stem + "_remux.mp4")
+            import subprocess
+            try:
+                subprocess.run([ffmpeg_exe, "-y", "-i", str(temp_path), "-c", "copy", "-movflags", "+faststart", str(remuxed)], check=True)
+                # replace temp with remuxed final
+                temp_path.unlink(missing_ok=True)
+                remuxed.replace(output_path)
+                logger.info("Remux recovered output to %s", output_path.name)
+                return str(output_path.resolve())
+            except Exception as exc:
+                logger.error("Remux failed: %s", exc)
+                # fall through to raising an error below
+
+        if not ok:
+            # Cleanup temp file and raise
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+            raise RuntimeError("Rendered file failed verification (corrupt or incomplete)")
+
+        # Atomic replace
+        try:
+            temp_path.replace(output_path)
+        except Exception:
+            # Fallback to rename
+            import shutil
+            shutil.move(str(temp_path), str(output_path))
+
+        return str(output_path.resolve())
 
     except Exception as exc:
         logger.error("Video rendering failed: %s", exc)
         raise
     finally:
+        if final_clip:
+            try:
+                final_clip.close()
+            except Exception:
+                pass
+        if final_video:
+            try:
+                final_video.close()
+            except Exception:
+                pass
         if audio_clip:
             try:
                 audio_clip.close()
@@ -112,7 +188,8 @@ def render_final_video(
 
 def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     """Load, resize, and loop/trim a clip to match target duration."""
-    clip = VideoFileClip(str(path))
+    # Load without audio to save RAM and avoid crash
+    clip = VideoFileClip(str(path), audio=False).with_fps(VIDEO_FPS)
     
     # 1. Loop if shorter than target
     if clip.duration < target_duration:

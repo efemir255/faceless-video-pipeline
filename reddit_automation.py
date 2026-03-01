@@ -22,6 +22,11 @@ def run_auto_pipeline(category: str, platforms: list[str]):
     """
     logger.info("🚀 Starting automated pipeline for category: %s", category)
 
+    from config import PEXELS_API_KEY
+    if not PEXELS_API_KEY:
+        logger.error("❌ PEXELS_API_KEY is not set. Cannot continue.")
+        return
+
     # 1. Fetch from Reddit
     story = get_reddit_story(category)
     if not story:
