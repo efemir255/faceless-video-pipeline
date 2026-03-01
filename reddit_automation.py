@@ -67,7 +67,7 @@ def run_auto_pipeline(category: str, platforms: list[str]):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automated Reddit Video Pipeline")
-    parser.add_argument("--category", choices=["interesting", "funny", "scary"], default="interesting")
+    parser.add_argument("--category", choices=["interesting", "funny", "scary", "drama", "tales", "entitled", "revenge"], default="interesting")
     parser.add_argument("--upload", nargs="+", choices=["youtube", "tiktok"], help="Platforms to upload to")
 
     args = parser.parse_args()

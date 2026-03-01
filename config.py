@@ -46,10 +46,22 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 AUDIO_DIR = OUTPUT_DIR / "audio"
 VIDEO_DIR = OUTPUT_DIR / "video"
 FINAL_DIR = OUTPUT_DIR / "final"
+ASSETS_DIR = PROJECT_ROOT / "assets"
+BACKGROUNDS_DIR = ASSETS_DIR / "backgrounds"
 
 # Create directories on import so other modules never hit FileNotFoundError
-for _dir in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
+for _dir in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR, BACKGROUNDS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
+
+# ─── Video Categories (Local Assets) ────────────────────────────────────
+# Mapping of user-friendly names to keywords for Pexels or local files
+VIDEO_CATEGORIES = {
+    "Minecraft Parkour": "minecraft parkour",
+    "GTA 5 Gameplay": "gta 5",
+    "Subway Surfers": "subway surfers",
+    "Satisfying": "satisfying",
+    "Nature": "nature",
+}
 
 # ─── Pexels API ──────────────────────────────────────────────────────────
 # Get a free key at https://www.pexels.com/api/

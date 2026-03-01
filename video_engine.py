@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 import json
+import time
 from moviepy import TextClip, ColorClip, CompositeVideoClip
 
 def render_final_video(
@@ -41,7 +42,8 @@ def render_final_video(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     if output_path is None:
-        output_path = FINAL_DIR / "final_video.mp4"
+        timestamp = int(time.time())
+        output_path = FINAL_DIR / f"final_video_{timestamp}.mp4"
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -67,7 +69,8 @@ def render_final_video(
 
         # Stitch clips together
         logger.info("Stitching %d clips...", len(video_clips))
-        final_video = concatenate_videoclips(video_clips, method="compose")
+        # method="chain" is much faster than "compose" if all clips are the same size
+        final_video = concatenate_videoclips(video_clips, method="chain")
         
         # Ensure it matches audio duration exactly (trim/loop last bit if needed)
         if final_video.duration > audio_duration:
@@ -101,6 +104,9 @@ def render_final_video(
         final_clip.close()
         final_video.close()
 
+        # ── Cleanup Old Videos ────────────────────────────────────────────
+        _cleanup_old_videos(FINAL_DIR, keep=3)
+
         return final_path
 
     except Exception as exc:
@@ -119,6 +125,22 @@ def render_final_video(
                 pass
             
     return ""  # Should not be reached due to raise in except
+
+
+def _cleanup_old_videos(directory: Path, keep: int = 3) -> None:
+    """Keep only the 'keep' most recent .mp4 files in a directory."""
+    try:
+        files = sorted(
+            list(directory.glob("final_video_*.mp4")),
+            key=lambda x: x.stat().st_mtime,
+            reverse=True
+        )
+        if len(files) > keep:
+            for f in files[keep:]:
+                f.unlink()
+                logger.debug("Deleted old video: %s", f.name)
+    except Exception as e:
+        logger.warning("Cleanup failed: %s", e)
 
 
 def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:

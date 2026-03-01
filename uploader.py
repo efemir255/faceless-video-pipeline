@@ -287,7 +287,8 @@ def _upload_youtube(
 
         # Wait until YouTube finishes processing
         logger.info("Waiting for upload processing to finish…")
-        _wait_for_upload_processing(page, timeout_sec=300)
+        # Increase timeout for longer videos
+        _wait_for_upload_processing(page, timeout_sec=600)
 
         # 10 — Publish (Re-locate the button to avoid stale element issues)
         done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button").first
@@ -477,6 +478,10 @@ def upload_video(
 
     results: dict[str, bool] = {}
     
+    # Optional environment override for headless
+    # If not headless, we might want to stay open for manual verification
+    is_headless = HEADLESS_BROWSER
+
     with sync_playwright() as pw:
         ctx = _get_browser_context(pw)
         # Persistent context opens one page by default. Reuse it.
@@ -497,6 +502,10 @@ def upload_video(
             except Exception as exc:
                 logger.error("%s dispatcher failed: %s", platform.upper(), exc)
                 results[platform] = False
+
+        if not is_headless:
+            logger.info("Closing browser in 20 seconds... (You can verify the upload manually now)")
+            time.sleep(20)
 
         ctx.close()
 

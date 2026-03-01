@@ -31,7 +31,7 @@ import streamlit as st
 # Apply nest_asyncio so sync Playwright can run within Streamlit's event loop.
 nest_asyncio.apply()
 
-from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR
+from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR, VIDEO_CATEGORIES
 from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script, get_background_video
 from video_engine import render_final_video
@@ -156,7 +156,7 @@ with st.expander("🤖 Source Content from Reddit"):
     with col_red1:
         reddit_category = st.selectbox(
             "Select Story Category",
-            ["Interesting", "Funny", "Scary"],
+            ["Interesting", "Funny", "Scary", "Drama", "Tales", "Entitled", "Revenge"],
             index=0
         )
     with col_red2:
@@ -202,12 +202,22 @@ with st.form("video_form"):
         value=st.session_state.last_script,
         key="f_script"
     )
-    keyword = st.text_input(
-        "🔍 Background Keyword",
-        placeholder='e.g. "ocean waves", "city night", "forest"',
-        value=st.session_state.last_keyword,
-        key="f_keyword"
-    )
+    col_k1, col_k2 = st.columns([1, 1])
+    with col_k1:
+        keyword = st.text_input(
+            "🔍 Pexels Keyword",
+            placeholder='e.g. "ocean waves", "city night"',
+            value=st.session_state.last_keyword,
+            key="f_keyword"
+        )
+    with col_k2:
+        bg_style = st.selectbox(
+            "🎥 Background Style",
+            ["Dynamic Pexels"] + list(VIDEO_CATEGORIES.keys()),
+            index=0,
+            help="Choose between dynamic stock footage or high-engagement gameplay."
+        )
+
     video_title = st.text_input(
         "🏷️ Video Title",
         placeholder="Title for YouTube / TikTok",
@@ -230,12 +240,13 @@ with st.form("video_form"):
 #  Generate pipeline
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _run_generate(script: str, kw: str) -> None:
+def _run_generate(script: str, kw: str, bg_style: str = "Dynamic Pexels") -> None:
     """Run the full TTS → fetch segments → stitch → render pipeline."""
     progress = st.progress(0, text="Starting…")
 
     # Step 1 — TTS
     progress.progress(10, text="🎙️ Generating audio and timing…")
+    st.toast("Generating AI narration...")
     audio_path, duration, subtitles_path = generate_audio(script)
     st.session_state.audio_path = audio_path
     st.session_state.audio_duration = duration
@@ -243,11 +254,20 @@ def _run_generate(script: str, kw: str) -> None:
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
-    clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
+    st.toast("Fetching background visuals...")
+
+    use_local = bg_style != "Dynamic Pexels"
+    # If local, kw is actually the category key
+    search_kw = kw if not use_local else VIDEO_CATEGORIES.get(bg_style, "nature")
+
+    clips_metadata = get_clips_for_script(
+        script, duration, base_keyword=search_kw, use_local_backgrounds=use_local
+    )
     st.session_state.video_path = clips_metadata  # Store the list of clips
 
     # Step 3 — Render
     progress.progress(70, text="🔧 Stitching and rendering final video with subtitles…")
+    st.toast("Merging audio and video...")
     final_path = render_final_video(
         audio_path, clips_metadata, subtitles_path=subtitles_path
     )
@@ -266,7 +286,7 @@ if generate_btn:
 
     if not script_text:
         st.warning("Please enter a script.")
-    elif not keyword:
+    elif not keyword and bg_style == "Dynamic Pexels":
         st.warning("Please enter a background keyword.")
     else:
         # BUG FIX: Persist form values before running pipeline so they
@@ -278,7 +298,7 @@ if generate_btn:
         st.session_state.last_script = script_text
 
         try:
-            _run_generate(script_text.strip(), keyword.strip())
+            _run_generate(script_text.strip(), keyword.strip(), bg_style=bg_style)
         except Exception as exc:
             st.error(f"❌ Pipeline error: {exc}")
 
