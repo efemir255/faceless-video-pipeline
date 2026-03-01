@@ -1,16 +1,20 @@
 """
-video_engine.py — Merge audio + background video into a final 9:16 short.
+video_engine.py — Merge audio + background video + subtitles into a final 9:16 short.
 
 Uses moviepy to composite the video, looping short clips to match
-the audio duration, and exporting a ready-to-upload MP4.
+the audio duration, and overlaying word-level subtitles.
 """
 
 import logging
+import json
+import time
 from pathlib import Path
 
 from moviepy import (
     AudioFileClip,
     VideoFileClip,
+    TextClip,
+    CompositeVideoClip,
     concatenate_videoclips,
     vfx,
 )
@@ -23,21 +27,20 @@ logger = logging.getLogger(__name__)
 def render_final_video(
     audio_path: str | Path,
     video_source: str | Path | list[dict],
+    subtitle_path: str | Path | None = None,
     output_path: str | Path | None = None,
 ) -> str:
     """
     Composite *audio_path* over *video_source* into a final 1080x1920 MP4.
-    
-    *video_source* can be:
-    - A single path to an MP4 (legacy).
-    - A list of dicts like [{"path": "...", "duration": 5.0}, ...].
+    If *subtitle_path* is provided, overlays word-level subtitles.
     """
     audio_path = Path(audio_path)
     if not audio_path.is_file():
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     if output_path is None:
-        output_path = FINAL_DIR / "final_video.mp4"
+        timestamp = int(time.time())
+        output_path = FINAL_DIR / f"final_video_{timestamp}.mp4"
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -63,14 +66,27 @@ def render_final_video(
 
         # Stitch clips together
         logger.info("Stitching %d clips...", len(video_clips))
-        final_video = concatenate_videoclips(video_clips, method="compose")
+        # BUG FIX: Use method="chain" for speed since all clips are already 1080x1920
+        background_video = concatenate_videoclips(video_clips, method="chain")
         
-        # Ensure it matches audio duration exactly (trim/loop last bit if needed)
-        if final_video.duration > audio_duration:
-            final_video = final_video.subclipped(0, audio_duration)
-        elif final_video.duration < audio_duration:
-            # This shouldn't happen much with our math, but just in case
-            final_video = final_video.with_effects([vfx.Loop(duration=audio_duration)])
+        # Ensure it matches audio duration exactly
+        if background_video.duration > audio_duration:
+            background_video = background_video.subclipped(0, audio_duration)
+        elif background_video.duration < audio_duration:
+            background_video = background_video.with_effects([vfx.Loop(duration=audio_duration)])
+
+        # Subtitles
+        final_video = background_video
+        if subtitle_path and Path(subtitle_path).exists():
+            logger.info("Rendering subtitles from %s", Path(subtitle_path).name)
+            subtitle_clips = _generate_subtitle_clips(subtitle_path)
+            if subtitle_clips:
+                # BUG FIX: use_bgclip=True ensures final video takes size/duration from background
+                final_video = CompositeVideoClip(
+                    [background_video] + subtitle_clips,
+                    use_bgclip=True
+                )
+                clips_to_close.append(final_video)
 
         final_clip = final_video.with_audio(audio_clip)
         
@@ -80,15 +96,20 @@ def render_final_video(
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
+            preset="ultrafast",  # Faster rendering
             threads=4,
             logger=None,
         )
 
+        # Cleanup old videos (keep only 3)
+        _cleanup_old_videos(FINAL_DIR)
+
         final_path = str(output_path.resolve())
         # Close explicitly before returning
         final_clip.close()
-        final_video.close()
+        if final_video != background_video:
+             final_video.close()
+        background_video.close()
 
         return final_path
 
@@ -107,12 +128,13 @@ def render_final_video(
             except Exception:
                 pass
             
-    return ""  # Should not be reached due to raise in except
+    return ""
 
 
 def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     """Load, resize, and loop/trim a clip to match target duration."""
-    clip = VideoFileClip(str(path))
+    # BUG FIX: Load without audio for performance
+    clip = VideoFileClip(str(path), audio=False).with_fps(VIDEO_FPS)
     
     # 1. Loop if shorter than target
     if clip.duration < target_duration:
@@ -127,16 +149,11 @@ def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     current_ratio = w / h
 
     if current_ratio > target_ratio:
-        # Video is wider than target: scale based on height
         clip = clip.resized(height=VIDEO_HEIGHT)
     else:
-        # Video is taller than target: scale based on width
         clip = clip.resized(width=VIDEO_WIDTH)
 
-    # Recalculate dimensions after resize
     w, h = clip.w, clip.h
-
-    # Center crop to exactly 1080x1920
     x_center = w / 2
     y_center = h / 2
 
@@ -148,3 +165,54 @@ def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     )
     
     return clip
+
+
+def _generate_subtitle_clips(subtitle_path: str | Path) -> list[TextClip]:
+    """Create a list of TextClip objects for each word."""
+    with open(subtitle_path, "r", encoding="utf-8") as f:
+        subs = json.load(f)
+
+    clips = []
+    # Use a common font that's likely present
+    font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    if not Path(font_path).exists():
+        font_path = "Arial" # Fallback
+
+    for item in subs:
+        word = item["text"].upper()
+        start = item["start"]
+        duration = item["duration"]
+
+        if duration <= 0:
+            duration = 0.1
+
+        try:
+            txt_clip = (
+                TextClip(
+                    text=word,
+                    font=font_path,
+                    font_size=90,
+                    color="yellow",
+                    stroke_color="black",
+                    stroke_width=2,
+                    method="label",
+                )
+                .with_start(start)
+                .with_duration(duration)
+                .with_position(("center", 1400)) # Position in lower third
+            )
+            clips.append(txt_clip)
+        except Exception as e:
+            logger.warning("Could not create TextClip for word '%s': %s", word, e)
+
+    return clips
+
+
+def _cleanup_old_videos(directory: Path, keep: int = 3):
+    """Keep only the most recent N videos in the final directory."""
+    files = sorted(directory.glob("final_video_*.mp4"), key=lambda x: x.stat().st_mtime, reverse=True)
+    for old_file in files[keep:]:
+        try:
+            old_file.unlink()
+        except Exception:
+            pass

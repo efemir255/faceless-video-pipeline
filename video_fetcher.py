@@ -10,6 +10,7 @@ returned — ``video_engine.py`` will loop it to fit.
 import logging
 import random
 import re
+import shutil
 from pathlib import Path
 
 import requests
@@ -100,7 +101,8 @@ def get_clips_for_script(
     for i, sentence in enumerate(sentences):
         sent_words = len(sentence.split())
         # Percentage of total duration this sentence takes
-        sent_duration = (sent_words / total_words) * total_duration
+        # BUG FIX: Prevent ZeroDivisionError if script is empty or whitespace only
+        sent_duration = (sent_words / max(1, total_words)) * total_duration
         
         # Combine base keyword with a snippet of the sentence
         snippet = " ".join(sentence.split()[:3])
@@ -142,4 +144,10 @@ def _download_file(url: str, output_path: Path) -> None:
             if chunk:
                 fh.write(chunk)
     
-    tmp_path.replace(output_path)
+    # BUG FIX: Use shutil.move for cross-device moves if /tmp is a different partition
+    try:
+        shutil.move(str(tmp_path), str(output_path))
+    except Exception as e:
+        logger.error("Failed to move temporary file: %s", e)
+        # Final attempt with replace if move fails
+        tmp_path.replace(output_path)
