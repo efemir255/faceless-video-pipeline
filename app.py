@@ -60,6 +60,7 @@ _DEFAULTS = {
     "final_video_path": None,
     "audio_path": None,
     "audio_duration": None,
+    "subtitles_path": None,
     "video_path": None,
     "generating": False,
     "upload_youtube": True,
@@ -234,10 +235,11 @@ def _run_generate(script: str, kw: str) -> None:
     progress = st.progress(0, text="Starting…")
 
     # Step 1 — TTS
-    progress.progress(10, text="🎙️ Generating audio…")
-    audio_path, duration = generate_audio(script)
+    progress.progress(10, text="🎙️ Generating audio and timing…")
+    audio_path, duration, subtitles_path = generate_audio(script)
     st.session_state.audio_path = audio_path
     st.session_state.audio_duration = duration
+    st.session_state.subtitles_path = subtitles_path
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
@@ -245,8 +247,10 @@ def _run_generate(script: str, kw: str) -> None:
     st.session_state.video_path = clips_metadata  # Store the list of clips
 
     # Step 3 — Render
-    progress.progress(70, text="🔧 Stitching and rendering final video…")
-    final_path = render_final_video(audio_path, clips_metadata)
+    progress.progress(70, text="🔧 Stitching and rendering final video with subtitles…")
+    final_path = render_final_video(
+        audio_path, clips_metadata, subtitles_path=subtitles_path
+    )
     st.session_state.final_video_path = final_path
 
     progress.progress(100, text="✅ Video connected to story!")
@@ -345,7 +349,9 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         st.session_state.video_path = new_clips
 
                         final_path = render_final_video(
-                            st.session_state.audio_path, new_clips
+                            st.session_state.audio_path,
+                            new_clips,
+                            subtitles_path=st.session_state.subtitles_path,
                         )
                         st.session_state.final_video_path = final_path
                     st.rerun()

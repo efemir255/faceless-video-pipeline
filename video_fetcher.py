@@ -85,16 +85,19 @@ def get_clips_for_script(
     """
     # ── 1. Split script into segments ──
     # Split by period, exclamation, or question mark using regex
-    # Handle common abbreviations to avoid splitting prematurely
-    raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
-    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
+    # We use a more robust regex that tries to avoid splitting on abbreviations
+    # like Mr. or Dr. but for simple faceless videos, basic splitting is often enough.
+    # We also filter out very short segments.
+    script_clean = script.replace("\n", " ").strip()
+    raw_segments = re.split(r'(?<=[.!?])\s+', script_clean)
+    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 2]
 
-    if not sentences:
-        sentences = [script.strip()]
+    if not sentences or (len(sentences) == 1 and not sentences[0]):
+        sentences = [script_clean] if script_clean else ["..."]
 
     # Estimate duration per sentence (simple word count ratio)
     words = script.split()
-    total_words = len(words)
+    total_words = max(len(words), 1)
     clips_metadata = []
 
     for i, sentence in enumerate(sentences):

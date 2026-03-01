@@ -35,8 +35,8 @@ def run_auto_pipeline(category: str, platforms: list[str]):
 
     try:
         # 2. TTS
-        logger.info("Generating TTS...")
-        audio_path, duration = generate_audio(script)
+        logger.info("Generating TTS and timing...")
+        audio_path, duration, subtitles_path = generate_audio(script)
 
         # 3. Clips
         logger.info("Fetching clips...")
@@ -45,8 +45,10 @@ def run_auto_pipeline(category: str, platforms: list[str]):
         clips_metadata = get_clips_for_script(script, duration, base_keyword=base_kw)
 
         # 4. Render
-        logger.info("Rendering video...")
-        final_video_path = render_final_video(audio_path, clips_metadata)
+        logger.info("Rendering video with subtitles...")
+        final_video_path = render_final_video(
+            audio_path, clips_metadata, subtitles_path=subtitles_path
+        )
 
         # 5. Upload
         if platforms:
