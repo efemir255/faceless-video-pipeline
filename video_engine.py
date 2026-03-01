@@ -78,15 +78,83 @@ def render_final_video(
         final_clip = final_video.with_audio(audio_clip)
         
         logger.info("Rendering final video → %s", output_path.name)
+
+        # Write to a temp file first, then atomically move into place. This
+        # avoids producing a truncated/uncorrupted final file if the write
+        # is interrupted. Also request the moov atom to be moved to the
+        # start of the file (faststart) for better streaming compatibility.
+        temp_path = output_path.with_suffix(".part.mp4")
+
+        # Pass ffmpeg params to ensure faststart
+        ffmpeg_params = ["-movflags", "+faststart"]
+
         final_clip.write_videofile(
-            str(output_path),
+            str(temp_path),
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
             preset="ultrafast",
             threads=4,
+            ffmpeg_params=ffmpeg_params,
             logger=None,
         )
+
+        # Post-write verification: use ffmpeg (bundled via imageio-ffmpeg)
+        # if available to validate the container. If validation fails,
+        # attempt a remux to recover the container; if that fails, raise
+        # an exception so the caller can retry or re-render.
+        try:
+            import imageio_ffmpeg as iioff
+            ffmpeg_exe = iioff.get_ffmpeg_exe()
+        except Exception:
+            ffmpeg_exe = None
+
+        def _verify(path):
+            if ffmpeg_exe:
+                import subprocess
+                res = subprocess.run([ffmpeg_exe, "-v", "error", "-i", str(path), "-f", "null", "-"], capture_output=True, text=True)
+                return res.returncode == 0 and not res.stderr
+            else:
+                # Fallback: try loading with moviepy
+                try:
+                    from moviepy.video.io.VideoFileClip import VideoFileClip as _V
+                    c = _V(str(path))
+                    c.close()
+                    return True
+                except Exception:
+                    return False
+
+        ok = _verify(temp_path)
+        if not ok and ffmpeg_exe:
+            # Try remuxing to recover the moov atom
+            remuxed = output_path.with_name(output_path.stem + "_remux.mp4")
+            import subprocess
+            try:
+                subprocess.run([ffmpeg_exe, "-y", "-i", str(temp_path), "-c", "copy", "-movflags", "+faststart", str(remuxed)], check=True)
+                # replace temp with remuxed final
+                temp_path.unlink(missing_ok=True)
+                remuxed.replace(output_path)
+                logger.info("Remux recovered output to %s", output_path.name)
+                return str(output_path.resolve())
+            except Exception as exc:
+                logger.error("Remux failed: %s", exc)
+                # fall through to raising an error below
+
+        if not ok:
+            # Cleanup temp file and raise
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+            raise RuntimeError("Rendered file failed verification (corrupt or incomplete)")
+
+        # Atomic replace
+        try:
+            temp_path.replace(output_path)
+        except Exception:
+            # Fallback to rename
+            import shutil
+            shutil.move(str(temp_path), str(output_path))
 
         return str(output_path.resolve())
 
