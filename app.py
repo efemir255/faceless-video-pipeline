@@ -2,16 +2,6 @@
 app.py — Streamlit Review UI & Orchestrator for the Faceless Video Pipeline.
 
 Run with:  streamlit run app.py
-
-Features
---------
-* Enter video script text and a Pexels search keyword.
-* Generate TTS audio → fetch background video → render final MP4.
-* Preview the finished video in the browser.
-* Approve & upload to YouTube / TikTok with one click.
-* Regenerate background (keeps audio, re-fetches + re-renders).
-* Discard and start over.
-* Account setup panel to log into YouTube / TikTok once.
 """
 
 import asyncio
@@ -33,7 +23,7 @@ nest_asyncio.apply()
 
 from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR
 from tts_engine import generate_audio
-from video_fetcher import get_clips_for_script, get_background_video
+from video_fetcher import get_clips_for_script
 from video_engine import render_final_video
 from uploader import upload_video, manual_login
 from reddit_fetcher import get_reddit_story
@@ -60,13 +50,11 @@ _DEFAULTS = {
     "final_video_path": None,
     "audio_path": None,
     "audio_duration": None,
+    "subtitle_path": None,
     "video_path": None,
     "generating": False,
     "upload_youtube": True,
     "upload_tiktok": True,
-    # BUG FIX: Persist the keyword and title/description so they survive
-    # a st.rerun() after "Regenerate BG" — without this the form fields
-    # reset to empty and the regen uses "nature" as a fallback.
     "last_keyword": "",
     "last_title": "",
     "last_description": "",
@@ -86,8 +74,7 @@ for key, val in _DEFAULTS.items():
 with st.sidebar:
     st.header("⚙️ Account Setup")
     st.caption(
-        "Log into each platform **once** so the app can upload automatically. "
-        "Cookies are saved locally — you won't need to log in again."
+        "Log into each platform **once** so the app can upload automatically."
     )
 
     col_yt, col_tt = st.columns(2)
@@ -120,7 +107,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🧹 Maintenance")
-    if st.button("🗑️ Clear Cache", use_container_width=True, help="Delete all temporary audio and video files"):
+    if st.button("🗑️ Clear Cache", use_container_width=True):
         count = 0
         for directory in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
             if directory.exists():
@@ -134,22 +121,14 @@ with st.sidebar:
         st.toast(f"Cleared {count} files.")
         st.rerun()
 
-    st.divider()
-    st.subheader("🔑 API Keys")
-    st.caption(
-        "Set your API keys in the `.env` file (see `.env.example`)."
-    )
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  Main UI
 # ═══════════════════════════════════════════════════════════════════════════
 
 st.title("🎬 Faceless Video Pipeline")
-st.write("Generate, review, and upload AI videos to YouTube Shorts & TikTok.")
 
-# ── Reddit Content Sourcing ──────────────────────────────────────────────
-
+# Reddit Content Sourcing
 with st.expander("🤖 Source Content from Reddit"):
     col_red1, col_red2 = st.columns([2, 1])
     with col_red1:
@@ -170,53 +149,43 @@ with st.expander("🤖 Source Content from Reddit"):
                     st.session_state.seen_reddit_ids.add(story["id"])
                     st.success(f"Fetched: {story['title']}")
                 else:
-                    st.error("Could not fetch a suitable story. Check credentials or filters.")
+                    st.error("Could not fetch a suitable story.")
 
     if "reddit_story" in st.session_state:
         story = st.session_state["reddit_story"]
         if st.button("📝 Use this Story", use_container_width=True):
-            # Update the underlying session state values
             st.session_state.last_script = story["text"]
             st.session_state.last_title = story["title"]
             st.session_state.last_description = f"Story from r/{story['subreddit']}\n#shorts #reddit"
             st.session_state.last_keyword = reddit_category.lower()
 
-            # CRITICAL: Also update the widget keys directly so the form
-            # reflects the changes even if the user has already typed.
             st.session_state.f_script = st.session_state.last_script
             st.session_state.f_title = st.session_state.last_title
             st.session_state.f_desc = st.session_state.last_description
             st.session_state.f_keyword = st.session_state.last_keyword
-
-            # We use st.rerun() to populate the form fields in the next run
             st.rerun()
 
-# ── Input form ───────────────────────────────────────────────────────────
-
+# Input form
 with st.form("video_form"):
     script_text = st.text_area(
         "📝 Video Script",
         height=180,
-        placeholder="Paste your narration script here…",
         value=st.session_state.last_script,
         key="f_script"
     )
     keyword = st.text_input(
         "🔍 Background Keyword",
-        placeholder='e.g. "ocean waves", "city night", "forest"',
         value=st.session_state.last_keyword,
         key="f_keyword"
     )
     video_title = st.text_input(
         "🏷️ Video Title",
-        placeholder="Title for YouTube / TikTok",
         value=st.session_state.last_title,
         key="f_title"
     )
     video_description = st.text_area(
         "📄 Video Description",
         height=80,
-        placeholder="Short description / hashtags",
         value=st.session_state.last_description,
         key="f_desc"
     )
@@ -234,40 +203,35 @@ def _run_generate(script: str, kw: str) -> None:
     progress = st.progress(0, text="Starting…")
 
     # Step 1 — TTS
-    progress.progress(10, text="🎙️ Generating audio…")
-    audio_path, duration = generate_audio(script)
+    progress.progress(10, text="🎙️ Generating audio & subtitles…")
+    audio_path, duration, subtitle_path = generate_audio(script)
     st.session_state.audio_path = audio_path
     st.session_state.audio_duration = duration
+    st.session_state.subtitle_path = subtitle_path
 
-    # Step 2 — Fetch relevant clips for script segments
-    progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
+    # Step 2 — Fetch relevant clips
+    progress.progress(30, text="🎥 Fetching relevant clips…")
     clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
-    st.session_state.video_path = clips_metadata  # Store the list of clips
+    st.session_state.video_path = clips_metadata
 
     # Step 3 — Render
-    progress.progress(70, text="🔧 Stitching and rendering final video…")
-    final_path = render_final_video(audio_path, clips_metadata)
+    progress.progress(70, text="🔧 Rendering final video with subtitles…")
+    final_path = render_final_video(audio_path, clips_metadata, subtitle_path=subtitle_path)
     st.session_state.final_video_path = final_path
 
-    progress.progress(100, text="✅ Video connected to story!")
+    progress.progress(100, text="✅ Video Generated!")
     st.balloons()
 
 
 if generate_btn:
-    # Read from keys to be extra sure they match current state
     script_text = st.session_state.get("f_script", "").strip()
     keyword = st.session_state.get("f_keyword", "").strip()
     video_title = st.session_state.get("f_title", "").strip()
     video_description = st.session_state.get("f_desc", "").strip()
 
-    if not script_text:
-        st.warning("Please enter a script.")
-    elif not keyword:
-        st.warning("Please enter a background keyword.")
+    if not script_text or not keyword:
+        st.warning("Please enter a script and keyword.")
     else:
-        # BUG FIX: Persist form values before running pipeline so they
-        # survive st.rerun(). Without this, clicking "Regenerate BG"
-        # after a rerun loses the keyword/title/description.
         st.session_state.last_keyword = keyword
         st.session_state.last_title = video_title
         st.session_state.last_description = video_description
@@ -288,11 +252,9 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
     st.subheader("📺 Preview")
     st.video(st.session_state.final_video_path)
 
-    st.write("")  # spacing
-
     col1, col2, col3 = st.columns(3)
 
-    # ── Approve & Upload ─────────────────────────────────────────────
+    # Approve & Upload
     with col1:
         if st.button("✅ Approve & Upload", use_container_width=True, type="primary"):
             platforms = []
@@ -302,11 +264,8 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                 platforms.append("tiktok")
 
             if not platforms:
-                st.warning("Select at least one upload target in the sidebar.")
+                st.warning("Select at least one upload target.")
             else:
-                # BUG FIX: Use persisted session values — the form variables
-                # (video_title, video_description) are empty on a rerun
-                # because Streamlit re-executes the form with no user input.
                 title = st.session_state.last_title or "Untitled Video"
                 desc = st.session_state.last_description or ""
 
@@ -323,20 +282,16 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                                 st.success(f"✅ {platform.title()} upload succeeded!")
                                 st.snow()
                             else:
-                                st.error(
-                                    f"❌ {platform.title()} upload failed. "
-                                    "Check the terminal for details."
-                                )
-                    except FileNotFoundError as exc:
+                                st.error(f"❌ {platform.title()} upload failed.")
+                    except Exception as exc:
                         st.error(f"❌ {exc}")
 
-    # ── Regenerate Background ────────────────────────────────────────
+    # Regenerate Background
     with col2:
         if st.button("🔄 Regenerate BG", use_container_width=True):
-            if st.session_state.audio_path and st.session_state.audio_duration:
+            if st.session_state.audio_path:
                 try:
-                    with st.spinner("Analyzing script and fetching new clips…"):
-                        # Use the persisted script for semantic regeneration
+                    with st.spinner("Fetching new clips and re-rendering…"):
                         script = st.session_state.last_script or "nature"
                         keyword = st.session_state.last_keyword or "nature"
                         new_clips = get_clips_for_script(
@@ -345,42 +300,21 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         st.session_state.video_path = new_clips
 
                         final_path = render_final_video(
-                            st.session_state.audio_path, new_clips
+                            st.session_state.audio_path,
+                            new_clips,
+                            subtitle_path=st.session_state.subtitle_path
                         )
                         st.session_state.final_video_path = final_path
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Regeneration failed: {exc}")
-            else:
-                st.warning("No audio to regenerate with. Generate first.")
 
-    # ── Discard ──────────────────────────────────────────────────────
+    # Discard
     with col3:
         if st.button("❌ Discard", use_container_width=True):
-            # Clean up generated files
-            for directory in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
-                if directory.exists():
-                    for f in directory.iterdir():
-                        # BUG FIX: Only delete files, not subdirectories.
-                        if f.is_file():
-                            try:
-                                f.unlink()
-                            except Exception:
-                                pass
-
-            # Reset session
             for key in _DEFAULTS:
                 st.session_state[key] = _DEFAULTS[key]
             st.rerun()
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-#  Footer
-# ═══════════════════════════════════════════════════════════════════════════
-
 st.divider()
-st.caption(
-    "Faceless Video Pipeline · Built with edge-tts, Pexels, moviepy, "
-    "Playwright & Streamlit"
-)
-
+st.caption("Faceless Video Pipeline")
