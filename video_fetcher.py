@@ -11,10 +11,11 @@ import logging
 import random
 import re
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from config import PEXELS_API_KEY, VIDEO_DIR
+from config import PEXELS_API_KEY, VIDEO_DIR, BACKGROUNDS_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -78,55 +79,64 @@ def get_clips_for_script(
     script: str,
     total_duration: float,
     base_keyword: str = "nature",
+    use_local_backgrounds: bool = False,
+    local_category: str = None,
 ) -> list[dict]:
     """
     Split script into segments, fetch a relevant clip for each,
     and return a list of (path, duration) dicts.
     """
+    if use_local_backgrounds:
+        return _get_local_clips(total_duration, local_category)
     # ── 1. Split script into segments ──
     # Split by period, exclamation, or question mark using regex
-    # Handle common abbreviations to avoid splitting prematurely
-    raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
-    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
+    # We use a more robust regex that tries to avoid splitting on abbreviations
+    # like Mr. or Dr. but for simple faceless videos, basic splitting is often enough.
+    # We also filter out very short segments.
+    script_clean = script.replace("\n", " ").strip()
+    raw_segments = re.split(r'(?<=[.!?])\s+', script_clean)
+    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 2]
 
-    if not sentences:
-        sentences = [script.strip()]
+    if not sentences or (len(sentences) == 1 and not sentences[0]):
+        sentences = [script_clean] if script_clean else ["..."]
 
     # Estimate duration per sentence (simple word count ratio)
     words = script.split()
-    total_words = len(words)
+    total_words = max(len(words), 1)
     clips_metadata = []
 
-    for i, sentence in enumerate(sentences):
+    def fetch_clip(i, sentence):
         sent_words = len(sentence.split())
-        # Percentage of total duration this sentence takes
         sent_duration = (sent_words / total_words) * total_duration
-        
-        # Combine base keyword with a snippet of the sentence
         snippet = " ".join(sentence.split()[:3])
         keyword = f"{base_keyword} {snippet}".strip()
-        
-        logger.info("Fetching clip for segment %d: '%s' (%.1fs)", i+1, keyword, sent_duration)
         
         try:
             filename = f"clip_{i:03d}.mp4"
             path = VIDEO_DIR / filename
             clip_path = get_background_video(keyword, sent_duration, output_path=path)
-            clips_metadata.append({
-                "path": clip_path,
-                "duration": sent_duration
-            })
+            return {"path": clip_path, "duration": sent_duration, "index": i}
         except Exception as exc:
             logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
-            # Fallback to a generic keyword if specific one fails
-            if i > 0 and clips_metadata:
-                # Reuse previous clip metadata if possible (it will be looped in engine)
-                clips_metadata.append(clips_metadata[-1])
+            return {"path": None, "duration": sent_duration, "index": i}
+
+    # Parallel fetch using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = list(executor.map(lambda p: fetch_clip(*p), enumerate(sentences)))
+
+    # Sort by index to maintain original order
+    results.sort(key=lambda r: r["index"])
+
+    # Fill in fallbacks for failed downloads
+    for i, res in enumerate(results):
+        if res["path"] is None:
+            if i > 0 and results[i-1]["path"]:
+                res["path"] = results[i-1]["path"]
             else:
-                # Absolute fallback
+                # Absolute fallback to nature
                 path = VIDEO_DIR / f"clip_{i:03d}.mp4"
-                clip_path = get_background_video("nature", sent_duration, output_path=path)
-                clips_metadata.append({"path": clip_path, "duration": sent_duration})
+                res["path"] = get_background_video("nature", res["duration"], output_path=path)
+        clips_metadata.append({"path": res["path"], "duration": res["duration"]})
 
     return clips_metadata
 
@@ -143,3 +153,34 @@ def _download_file(url: str, output_path: Path) -> None:
                 fh.write(chunk)
     
     tmp_path.replace(output_path)
+
+
+def _get_local_clips(total_duration: float, category: str = None) -> list[dict]:
+    """
+    Search assets/backgrounds/{category} for MP4 files. If category is not provided,
+    search in the root BACKGROUNDS_DIR.
+    """
+    search_dir = BACKGROUNDS_DIR
+    if category:
+        search_dir = BACKGROUNDS_DIR / category
+        if not search_dir.exists():
+            logger.warning("Category subdirectory %s does not exist. Using root.", search_dir)
+            search_dir = BACKGROUNDS_DIR
+
+    local_files = list(search_dir.glob("*.mp4"))
+    if not local_files:
+        # Check subdirectories if root is empty and no category was specified
+        if search_dir == BACKGROUNDS_DIR:
+            local_files = list(BACKGROUNDS_DIR.glob("**/*.mp4"))
+
+    if not local_files:
+        logger.warning("No local backgrounds found in %s.", search_dir)
+        raise FileNotFoundError(f"No local background videos found in {search_dir}")
+
+    chosen = random.choice(local_files)
+    logger.info("Using local background: %s", chosen.name)
+
+    # For local backgrounds, we usually just use one long clip and let the engine
+    # handle it, but to match the multi-clip pipeline we return one segment.
+    # The engine will loop it if needed.
+    return [{"path": str(chosen.resolve()), "duration": total_duration}]
