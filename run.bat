@@ -21,7 +21,7 @@ if exist .venv\Scripts\activate.bat (
     call venv\Scripts\activate.bat
 )
 
-:: 3. Launch streamlit
-streamlit run app.py
+:: 3. Launch streamlit (it will automatically open the browser)
+streamlit run app.py --server.headless false
 
 pause

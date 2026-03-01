@@ -11,7 +11,7 @@ All notable changes to the Faceless Video Pipeline will be documented in this fi
 - **Manual Visual Selection**: UI now allows picking specific files from the built-in library.
 - **Trending Reddit Categories**: Added "Drama" (AITA), "Tales," "Entitled," and "Revenge" categories.
 - **Series Detection**: Identify "Part 1," "Part 2" stories from Reddit automatically.
-- **One-Click Launch**: Added `run.sh` (Linux/macOS) and `run.bat` (Windows) scripts.
+- **One-Click Launch**: Added `run.sh` (Linux/macOS) and `run.bat` (Windows) scripts that automatically set up the environment and open the browser.
 - **Parallel Downloads**: Used `ThreadPoolExecutor` to speed up Pexels clip fetching.
 - **Rolling Retention Policy**: Automatically keeps only the 3 most recent final videos to save disk space.
 
