@@ -16,7 +16,7 @@ from config import FINAL_DIR
 
 logger = logging.getLogger(__name__)
 
-def run_auto_pipeline(category: str, platforms: list[str]):
+def run_auto_pipeline(category: str, platforms: list[str], source: str = "pexels", video_category: str | None = None):
     """
     Fetch -> TTS -> Clips -> Render -> Upload
     """
@@ -39,10 +39,16 @@ def run_auto_pipeline(category: str, platforms: list[str]):
         audio_path, duration = generate_audio(script)
 
         # 3. Clips
-        logger.info("Fetching clips...")
+        logger.info("Fetching clips (source: %s, category: %s)...", source, video_category)
         # Use a generic keyword related to the category
         base_kw = "scary" if category == "scary" else "nature"
-        clips_metadata = get_clips_for_script(script, duration, base_keyword=base_kw)
+        clips_metadata = get_clips_for_script(
+            script,
+            duration,
+            base_keyword=base_kw,
+            source_type=source,
+            category=video_category
+        )
 
         # 4. Render
         logger.info("Rendering video...")
@@ -66,6 +72,8 @@ def run_auto_pipeline(category: str, platforms: list[str]):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automated Reddit Video Pipeline")
     parser.add_argument("--category", choices=["interesting", "funny", "scary"], default="interesting")
+    parser.add_argument("--source", choices=["pexels", "builtin"], default="pexels", help="Background source")
+    parser.add_argument("--video-category", help="Built-in category name (if source is builtin)")
     parser.add_argument("--upload", nargs="+", choices=["youtube", "tiktok"], help="Platforms to upload to")
 
     args = parser.parse_args()
@@ -73,4 +81,4 @@ if __name__ == "__main__":
     # Configure logging to console for CLI use
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 
-    run_auto_pipeline(args.category, args.upload)
+    run_auto_pipeline(args.category, args.upload, source=args.source, video_category=args.video_category)
