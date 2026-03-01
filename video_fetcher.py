@@ -79,11 +79,25 @@ def get_clips_for_script(
     script: str,
     total_duration: float,
     base_keyword: str = "nature",
+    source: str = "pexels",
+    category: str | None = None,
 ) -> list[dict]:
     """
     Split script into segments, fetch a relevant clip for each,
     and return a list of (path, duration) dicts.
     """
+    # handle built-in source first
+    if source == "builtin" and category:
+        from config import VIDEO_CATEGORIES
+        if category not in VIDEO_CATEGORIES:
+            raise RuntimeError(f"Unknown built-in category '{category}'")
+        val = VIDEO_CATEGORIES[category]
+        # if the mapping points to a local file, just return it with full duration
+        if isinstance(val, str) and Path(val).is_file():
+            return [{"path": str(Path(val).resolve()), "duration": total_duration, "random_start": True}]
+        # otherwise treat value as keyword for Pexels search
+        base_keyword = val
+
     # ── 1. Split script into segments ──
     # Split by period, exclamation, or question mark using regex
     # Handle common abbreviations to avoid splitting prematurely

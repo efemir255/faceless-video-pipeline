@@ -21,7 +21,7 @@ import streamlit as st
 # Apply nest_asyncio so sync Playwright can run within Streamlit's event loop.
 nest_asyncio.apply()
 
-from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR
+from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR, VIDEO_CATEGORIES
 from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script
 from video_engine import render_final_video
@@ -56,6 +56,9 @@ _DEFAULTS = {
     "upload_youtube": True,
     "upload_tiktok": True,
     "last_keyword": "",
+    "last_category": list(VIDEO_CATEGORIES.keys())[0],
+    "source_type": "pexels",
+    "include_subtitles": True,
     "last_title": "",
     "last_description": "",
     "last_script": "",
@@ -173,10 +176,13 @@ with st.form("video_form"):
         value=st.session_state.last_script,
         key="f_script"
     )
+    # keyword is only used when fetching from Pexels; disable when using builtin
     keyword = st.text_input(
         "🔍 Background Keyword",
         value=st.session_state.last_keyword,
-        key="f_keyword"
+        key="f_keyword",
+        disabled=(st.session_state.get("f_source") == "builtin"),
+        help="Ignored if you select a built-in video source."
     )
     video_title = st.text_input(
         "🏷️ Video Title",
@@ -189,6 +195,18 @@ with st.form("video_form"):
         value=st.session_state.last_description,
         key="f_desc"
     )
+    # Source selection: Pexels API or built-in categories
+    source_type = st.radio("🎯 Video Source", options=["pexels", "builtin"], index=0, key="f_source")
+    category = None
+    if source_type == "builtin":
+        category = st.selectbox(
+            "📂 Choose Category (Built-in)",
+            options=list(VIDEO_CATEGORIES.keys()),
+            index=list(VIDEO_CATEGORIES.keys()).index(st.session_state.last_category),
+            key="f_category",
+            help="Select one of the pre-sourced most popular background categories."
+        )
+    include_subs = st.checkbox("Include Subtitles (if available)", value=st.session_state.include_subtitles, key="f_subs")
     generate_btn = st.form_submit_button(
         "🚀 Generate Video", use_container_width=True
     )
@@ -198,7 +216,7 @@ with st.form("video_form"):
 #  Generate pipeline
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _run_generate(script: str, kw: str) -> None:
+def _run_generate(script: str, kw: str, source: str = "pexels", category: str | None = None, include_subs: bool = True) -> None:
     """Run the full TTS → fetch segments → stitch → render pipeline."""
     progress = st.progress(0, text="Starting…")
 
@@ -211,12 +229,23 @@ def _run_generate(script: str, kw: str) -> None:
 
     # Step 2 — Fetch relevant clips
     progress.progress(30, text="🎥 Fetching relevant clips…")
-    clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
+    # Pass category/source through to the fetcher if supported
+    clips_metadata = get_clips_for_script(
+        script,
+        duration,
+        base_keyword=kw,
+        source=source,
+        category=category,
+    )
     st.session_state.video_path = clips_metadata
 
     # Step 3 — Render
     progress.progress(70, text="🔧 Rendering final video with subtitles…")
-    final_path = render_final_video(audio_path, clips_metadata, subtitle_path=subtitle_path)
+    final_path = render_final_video(
+        audio_path,
+        clips_metadata,
+        subtitle_path=subtitle_path if include_subs else None,
+    )
     st.session_state.final_video_path = final_path
 
     progress.progress(100, text="✅ Video Generated!")
@@ -225,12 +254,16 @@ def _run_generate(script: str, kw: str) -> None:
 
 if generate_btn:
     script_text = st.session_state.get("f_script", "").strip()
+    # keyword may be empty if builtin source is chosen
     keyword = st.session_state.get("f_keyword", "").strip()
     video_title = st.session_state.get("f_title", "").strip()
     video_description = st.session_state.get("f_desc", "").strip()
+    source_type = st.session_state.get("f_source", "pexels")
+    category = st.session_state.get("f_category") if source_type == "builtin" else None
+    include_subs = st.session_state.get("f_subs", True)
 
-    if not script_text or not keyword:
-        st.warning("Please enter a script and keyword.")
+    if not script_text or (not keyword and source_type == "pexels"):
+        st.warning("Please enter a script and keyword (unless using built-in source).")
     else:
         st.session_state.last_keyword = keyword
         st.session_state.last_title = video_title
@@ -238,7 +271,14 @@ if generate_btn:
         st.session_state.last_script = script_text
 
         try:
-            _run_generate(script_text.strip(), keyword.strip())
+            # if builtin, keyword is ignored
+            _run_generate(
+                script_text.strip(),
+                keyword.strip(),
+                source=source_type,
+                category=category,
+                include_subs=include_subs,
+            )
         except Exception as exc:
             st.error(f"❌ Pipeline error: {exc}")
 
@@ -294,15 +334,21 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                     with st.spinner("Fetching new clips and re-rendering…"):
                         script = st.session_state.last_script or "nature"
                         keyword = st.session_state.last_keyword or "nature"
+                        source_type = st.session_state.get("f_source", "pexels")
+                        category = st.session_state.get("f_category") if source_type == "builtin" else None
                         new_clips = get_clips_for_script(
-                            script, st.session_state.audio_duration, base_keyword=keyword
+                            script,
+                            st.session_state.audio_duration,
+                            base_keyword=keyword,
+                            source=source_type,
+                            category=category,
                         )
                         st.session_state.video_path = new_clips
 
                         final_path = render_final_video(
                             st.session_state.audio_path,
                             new_clips,
-                            subtitle_path=st.session_state.subtitle_path
+                            subtitle_path=st.session_state.subtitle_path if st.session_state.get("f_subs", True) else None,
                         )
                         st.session_state.final_video_path = final_path
                     st.rerun()

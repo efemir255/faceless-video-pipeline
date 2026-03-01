@@ -46,9 +46,10 @@ OUTPUT_DIR = PROJECT_ROOT / "output"
 AUDIO_DIR = OUTPUT_DIR / "audio"
 VIDEO_DIR = OUTPUT_DIR / "video"
 FINAL_DIR = OUTPUT_DIR / "final"
+BUILTIN_VIDEO_DIR = PROJECT_ROOT / "assets" / "backgrounds"
 
 # Create directories on import so other modules never hit FileNotFoundError
-for _dir in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
+for _dir in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR, BUILTIN_VIDEO_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
 # ─── Pexels API ──────────────────────────────────────────────────────────
@@ -93,3 +94,17 @@ HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "false").lower() == "true"
 # ─── Platform URLs ───────────────────────────────────────────────────────
 YOUTUBE_STUDIO_UPLOAD_URL = "https://studio.youtube.com"
 TIKTOK_UPLOAD_URL = "https://www.tiktok.com/creator#/upload?scene=creator_center"
+
+
+# ─── Video Categories ──────────────────────────────────────────────────
+# Mapping of user-friendly names to keywords (or local paths if you add files
+# under assets/backgrounds/).
+# If the value is a path and the file exists, it will be used directly; otherwise
+# the string is treated as a search keyword sent to Pexels.
+VIDEO_CATEGORIES = {
+    "Minecraft Parkour": "minecraft parkour gameplay",
+    "GTA 5 Stunts": "gta 5 stunts gameplay",
+    "Subway Surfers": "subway surfers gameplay",
+    "Soap Cutting": "soap cutting satisfying",
+    "Satisfying": "satisfying kinetic sand",
+}
