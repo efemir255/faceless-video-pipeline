@@ -54,11 +54,12 @@ for _dir in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR, BACKGROUNDS_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
 
 # ─── Video Categories (Local Assets) ────────────────────────────────────
-# Mapping of user-friendly names to keywords for Pexels or local files
+# Mapping of user-friendly names to keywords for Pexels or local subdirectories
 VIDEO_CATEGORIES = {
-    "Minecraft Parkour": "minecraft parkour",
-    "GTA 5 Gameplay": "gta 5",
-    "Subway Surfers": "subway surfers",
+    "Minecraft Parkour": "minecraft",
+    "GTA 5 Gameplay": "gta5",
+    "Subway Surfers": "subway_surfers",
+    "Soap Cutting": "soap_cutting",
     "Satisfying": "satisfying",
     "Nature": "nature",
 }

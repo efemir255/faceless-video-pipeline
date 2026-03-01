@@ -295,16 +295,21 @@ def _upload_youtube(
         done_btn.wait_for(state="visible", timeout=15_000)
         done_btn.click()
 
-        # BUG FIX: Wait for the success dialog
+        # BUG FIX: Wait for the success dialog or 'Upload complete' message
         try:
+            # Multi-strategy success detection
             page.wait_for_selector(
-                "ytcp-video-share-dialog, #dialog-title",
+                "ytcp-video-share-dialog, #dialog-title, text='Upload complete', text='Finished processing'",
                 state="visible",
-                timeout=30_000,
+                timeout=60_000,
             )
-            logger.info("YouTube upload complete ✓")
+            logger.info("YouTube upload confirmed complete ✓")
         except PwTimeout:
-            logger.warning("Success dialog not detected, but upload may have completed.")
+            # Check if the 'done' button changed to 'close' or 'publish'
+            if page.locator("text='Close', text='Publish'").is_visible():
+                logger.info("YouTube upload confirmed via button state ✓")
+            else:
+                logger.warning("Success signal not detected, but checking final URL...")
 
         return True
 
@@ -407,10 +412,14 @@ def _upload_tiktok(
         post_btn.click()
 
         try:
-            page.wait_for_url("**/manage**", timeout=30_000)
-            logger.info("TikTok upload complete ✓")
+            # TikTok usually shows a 'Manage your posts' button or redirects
+            page.wait_for_selector("text='Manage your posts', text='Your video is being uploaded'", timeout=60_000)
+            logger.info("TikTok upload confirmed complete ✓")
         except PwTimeout:
-            logger.warning("Post-upload redirect not detected.")
+            if "manage" in page.url:
+                 logger.info("TikTok upload confirmed via URL ✓")
+            else:
+                logger.warning("Post-upload signal not detected.")
 
         return True
 

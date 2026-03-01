@@ -80,13 +80,14 @@ def get_clips_for_script(
     total_duration: float,
     base_keyword: str = "nature",
     use_local_backgrounds: bool = False,
+    local_category: str = None,
 ) -> list[dict]:
     """
     Split script into segments, fetch a relevant clip for each,
     and return a list of (path, duration) dicts.
     """
     if use_local_backgrounds:
-        return _get_local_clips(total_duration)
+        return _get_local_clips(total_duration, local_category)
     # ── 1. Split script into segments ──
     # Split by period, exclamation, or question mark using regex
     # We use a more robust regex that tries to avoid splitting on abbreviations
@@ -154,16 +155,27 @@ def _download_file(url: str, output_path: Path) -> None:
     tmp_path.replace(output_path)
 
 
-def _get_local_clips(total_duration: float) -> list[dict]:
+def _get_local_clips(total_duration: float, category: str = None) -> list[dict]:
     """
-    Search assets/backgrounds for MP4 files. If found, pick one and
-    partition it (random start) into segments to match total_duration.
+    Search assets/backgrounds/{category} for MP4 files. If category is not provided,
+    search in the root BACKGROUNDS_DIR.
     """
-    local_files = list(BACKGROUNDS_DIR.glob("*.mp4"))
+    search_dir = BACKGROUNDS_DIR
+    if category:
+        search_dir = BACKGROUNDS_DIR / category
+        if not search_dir.exists():
+            logger.warning("Category subdirectory %s does not exist. Using root.", search_dir)
+            search_dir = BACKGROUNDS_DIR
+
+    local_files = list(search_dir.glob("*.mp4"))
     if not local_files:
-        logger.warning("No local backgrounds found in %s. Falling back to Pexels.", BACKGROUNDS_DIR)
-        # We can't easily fall back from here without keywords, so we raise
-        raise FileNotFoundError(f"No local background videos found in {BACKGROUNDS_DIR}")
+        # Check subdirectories if root is empty and no category was specified
+        if search_dir == BACKGROUNDS_DIR:
+            local_files = list(BACKGROUNDS_DIR.glob("**/*.mp4"))
+
+    if not local_files:
+        logger.warning("No local backgrounds found in %s.", search_dir)
+        raise FileNotFoundError(f"No local background videos found in {search_dir}")
 
     chosen = random.choice(local_files)
     logger.info("Using local background: %s", chosen.name)
