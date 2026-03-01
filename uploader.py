@@ -322,40 +322,47 @@ def _upload_youtube(
     return False
 
 
-def _wait_for_upload_processing(page, timeout_sec: int = 300) -> None:
+def _wait_for_upload_processing(page, timeout_sec: int = 600) -> None:
     """
-    Poll YouTube Studio until the video finishes processing.
-
-    YouTube shows a progress text like "Uploading 45%…" or "Processing…"
-    and the Done button stays disabled until it's ready. We watch for the
-    progress text to disappear or the button to become enabled.
+    Poll YouTube Studio until the video is fully uploaded and processed.
+    Increases timeout and uses a stricter check for the 'Done' button.
     """
     start = time.time()
     last_log_time = start
-    poll_interval = 3  # seconds
+    poll_interval = 5  # seconds
+
+    logger.info("Waiting for YouTube to finish processing (timeout: %ds)...", timeout_sec)
 
     while time.time() - start < timeout_sec:
-        # Check if Done button is enabled (no "disabled" attribute)
-        done_btn = page.locator("#done-button")
-        is_disabled = done_btn.get_attribute("disabled")
-        if is_disabled is None:
-            # Button is enabled — processing is done
+        # 1. Check if the "Upload complete" text is visible or Done is clickable
+        try:
+            # Look for various "finished" indicators
+            status_text = page.locator(".status-label-container").inner_text(timeout=2000).lower()
+            if "complete" in status_text or "finished" in status_text:
+                 logger.info("YouTube reports upload complete via status label.")
+                 return
+        except Exception:
+            pass
+
+        # 2. Check the Done/Publish button state
+        done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button").first
+        if done_btn.is_visible() and done_btn.is_enabled():
+            logger.info("Done button is now enabled.")
             return
 
         now = time.time()
         elapsed = int(now - start)
-        if now - last_log_time >= 15:
-            # Check for progress text periodically to log status
+        if now - last_log_time >= 20:
             try:
-                progress = page.locator(".progress-label").inner_text(timeout=2_000)
-                logger.info("Upload progress: %s (%ds elapsed)", progress, elapsed)
+                progress = page.locator(".progress-label, .status-label-container").inner_text(timeout=3_000)
+                logger.info("Upload status: %s (%ds elapsed)", progress.strip(), elapsed)
             except Exception:
-                logger.info("Waiting for processing… (%ds elapsed)", elapsed)
+                logger.info("Waiting for YouTube processing... (%ds elapsed)", elapsed)
             last_log_time = now
 
         time.sleep(poll_interval)
 
-    logger.warning("Upload processing timed out after %ds — clicking Done anyway.", timeout_sec)
+    logger.warning("Upload processing timed out after %ds.", timeout_sec)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -389,8 +396,26 @@ def _upload_tiktok(
             file_input = page.locator('input[type="file"]').first
 
         file_input.set_input_files(video_path)
-        logger.info("File selected, waiting for processing…")
-        time.sleep(8)
+        logger.info("File selected, waiting for TikTok upload to complete…")
+
+        # Polling for upload completion on TikTok
+        start_time = time.time()
+        upload_complete = False
+        while time.time() - start_time < 300: # 5 min timeout
+            try:
+                # TikTok usually shows a "100%" or specific success text
+                status = page.locator(".upload-stage, .file-list-item-status").inner_text(timeout=2000).lower()
+                if "100%" in status or "uploaded" in status or "edit" in status:
+                    upload_complete = True
+                    break
+            except Exception:
+                pass
+            time.sleep(5)
+
+        if not upload_complete:
+            logger.warning("TikTok upload completion not detected via status, proceeding anyway.")
+        else:
+            logger.info("TikTok upload appears complete.")
 
         # 3 — Fill caption
         caption_editor = page.locator('div[contenteditable="true"]').first

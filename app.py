@@ -248,6 +248,7 @@ def _run_generate(script: str, kw: str) -> None:
 
     # Step 3 — Render
     progress.progress(70, text="🔧 Stitching and rendering final video…")
+    # BUG FIX: Ensure we use the latest timestamped path returned by the engine
     final_path = render_final_video(audio_path, clips_metadata)
     st.session_state.final_video_path = final_path
 
@@ -351,6 +352,7 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         final_path = render_final_video(
                             st.session_state.audio_path, new_clips
                         )
+                        # BUG FIX: Update session state with the new timestamped path
                         st.session_state.final_video_path = final_path
                     st.rerun()
                 except Exception as exc:
@@ -366,6 +368,9 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                 if directory.exists():
                     for f in directory.iterdir():
                         # BUG FIX: Only delete files, not subdirectories.
+                        # Also respect retention policy in FINAL_DIR (handled by engine usually,
+                        # but Discard should probably clear everything EXCEPT the last few if we want safety,
+                        # or clear everything for a fresh start). Let's clear all for fresh start.
                         if f.is_file():
                             try:
                                 f.unlink()
