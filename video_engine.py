@@ -7,6 +7,7 @@ the audio duration, and overlaying word-level subtitles.
 
 import logging
 import json
+import time
 from pathlib import Path
 
 from moviepy import (
@@ -38,7 +39,6 @@ def render_final_video(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     if output_path is None:
-        import time
         timestamp = int(time.time())
         output_path = FINAL_DIR / f"final_video_{timestamp}.mp4"
     output_path = Path(output_path)
@@ -66,7 +66,8 @@ def render_final_video(
 
         # Stitch clips together
         logger.info("Stitching %d clips...", len(video_clips))
-        background_video = concatenate_videoclips(video_clips, method="compose")
+        # BUG FIX: Use method="chain" for speed since all clips are already 1080x1920
+        background_video = concatenate_videoclips(video_clips, method="chain")
         
         # Ensure it matches audio duration exactly
         if background_video.duration > audio_duration:
@@ -80,7 +81,11 @@ def render_final_video(
             logger.info("Rendering subtitles from %s", Path(subtitle_path).name)
             subtitle_clips = _generate_subtitle_clips(subtitle_path)
             if subtitle_clips:
-                final_video = CompositeVideoClip([background_video] + subtitle_clips)
+                # BUG FIX: use_bgclip=True ensures final video takes size/duration from background
+                final_video = CompositeVideoClip(
+                    [background_video] + subtitle_clips,
+                    use_bgclip=True
+                )
                 clips_to_close.append(final_video)
 
         final_clip = final_video.with_audio(audio_clip)
@@ -128,7 +133,8 @@ def render_final_video(
 
 def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     """Load, resize, and loop/trim a clip to match target duration."""
-    clip = VideoFileClip(str(path))
+    # BUG FIX: Load without audio for performance
+    clip = VideoFileClip(str(path), audio=False).with_fps(VIDEO_FPS)
     
     # 1. Loop if shorter than target
     if clip.duration < target_duration:
