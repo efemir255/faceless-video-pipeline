@@ -2,16 +2,6 @@
 app.py — Streamlit Review UI & Orchestrator for the Faceless Video Pipeline.
 
 Run with:  streamlit run app.py
-
-Features
---------
-* Enter video script text and a Pexels search keyword.
-* Generate TTS audio → fetch background video → render final MP4.
-* Preview the finished video in the browser.
-* Approve & upload to YouTube / TikTok with one click.
-* Regenerate background (keeps audio, re-fetches + re-renders).
-* Discard and start over.
-* Account setup panel to log into YouTube / TikTok once.
 """
 
 import asyncio
@@ -65,9 +55,6 @@ _DEFAULTS = {
     "generating": False,
     "upload_youtube": True,
     "upload_tiktok": True,
-    # BUG FIX: Persist the keyword and title/description so they survive
-    # a st.rerun() after "Regenerate BG" — without this the form fields
-    # reset to empty and the regen uses "nature" as a fallback.
     "last_keyword": "",
     "last_title": "",
     "last_description": "",
@@ -78,6 +65,61 @@ _DEFAULTS = {
 for key, val in _DEFAULTS.items():
     if key not in st.session_state:
         st.session_state[key] = val
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+#  Helper: Generation Pipeline
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _run_generate(script: str, kw: str, bg_style: str = "Dynamic Pexels", local_file_path: str = None) -> None:
+    """Run the full TTS → fetch segments → stitch → render pipeline."""
+    progress = st.progress(0, text="Starting…")
+
+    # Step 1 — TTS
+    progress.progress(10, text="🎙️ Generating audio and timing…")
+    st.toast("Generating AI narration...")
+    audio_path, duration, subtitles_path = generate_audio(script)
+    st.session_state.audio_path = audio_path
+    st.session_state.audio_duration = duration
+    st.session_state.subtitles_path = subtitles_path
+
+    # Step 2 — Fetch relevant clips for script segments
+    progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
+    st.toast("Fetching background visuals...")
+
+    use_local = bg_style != "Dynamic Pexels"
+
+    if local_file_path:
+        # User selected a specific local file
+        logger.info("Using manually selected local file: %s", local_file_path)
+        clips_metadata = [{"path": local_file_path, "duration": duration}]
+    else:
+        # If local without specific path, use random from category
+        # If not local, use Pexels
+        search_kw = kw
+        local_cat = None
+        if use_local:
+            local_cat = VIDEO_CATEGORIES.get(bg_style)
+
+        clips_metadata = get_clips_for_script(
+            script,
+            duration,
+            base_keyword=search_kw,
+            use_local_backgrounds=use_local,
+            local_category=local_cat
+        )
+    st.session_state.video_path = clips_metadata  # Store the list of clips
+
+    # Step 3 — Render
+    progress.progress(70, text="🔧 Stitching and rendering final video with subtitles…")
+    st.toast("Merging audio and video...")
+    final_path = render_final_video(
+        audio_path, clips_metadata, subtitles_path=subtitles_path
+    )
+    st.session_state.final_video_path = final_path
+
+    progress.progress(100, text="✅ Video connected to story!")
+    st.balloons()
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -282,62 +324,6 @@ if st.button("🚀 Generate Final Video", use_container_width=True, type="primar
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-#  Generate pipeline
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _run_generate(script: str, kw: str, bg_style: str = "Dynamic Pexels", local_file_path: str = None) -> None:
-    """Run the full TTS → fetch segments → stitch → render pipeline."""
-    progress = st.progress(0, text="Starting…")
-
-    # Step 1 — TTS
-    progress.progress(10, text="🎙️ Generating audio and timing…")
-    st.toast("Generating AI narration...")
-    audio_path, duration, subtitles_path = generate_audio(script)
-    st.session_state.audio_path = audio_path
-    st.session_state.audio_duration = duration
-    st.session_state.subtitles_path = subtitles_path
-
-    # Step 2 — Fetch relevant clips for script segments
-    progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
-    st.toast("Fetching background visuals...")
-
-    use_local = bg_style != "Dynamic Pexels"
-
-    if local_file_path:
-        # User selected a specific local file
-        clips_metadata = [{"path": local_file_path, "duration": duration}]
-    else:
-        # If local without specific path, use random from category
-        # If not local, use Pexels
-        search_kw = kw
-        local_cat = None
-        if use_local:
-            local_cat = VIDEO_CATEGORIES.get(bg_style)
-
-        clips_metadata = get_clips_for_script(
-            script,
-            duration,
-            base_keyword=search_kw,
-            use_local_backgrounds=use_local,
-            local_category=local_cat
-        )
-    st.session_state.video_path = clips_metadata  # Store the list of clips
-
-    # Step 3 — Render
-    progress.progress(70, text="🔧 Stitching and rendering final video with subtitles…")
-    st.toast("Merging audio and video...")
-    final_path = render_final_video(
-        audio_path, clips_metadata, subtitles_path=subtitles_path
-    )
-    st.session_state.final_video_path = final_path
-
-    progress.progress(100, text="✅ Video connected to story!")
-    st.balloons()
-
-
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 #  Preview & Actions
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -362,9 +348,7 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
             if not platforms:
                 st.warning("Select at least one upload target in the sidebar.")
             else:
-                # BUG FIX: Use persisted session values — the form variables
-                # (video_title, video_description) are empty on a rerun
-                # because Streamlit re-executes the form with no user input.
+                # BUG FIX: Use persisted session values
                 title = st.session_state.last_title or "Untitled Video"
                 desc = st.session_state.last_description or ""
 
@@ -421,7 +405,6 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
             for directory in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
                 if directory.exists():
                     for f in directory.iterdir():
-                        # BUG FIX: Only delete files, not subdirectories.
                         if f.is_file():
                             try:
                                 f.unlink()
@@ -443,4 +426,3 @@ st.caption(
     "Faceless Video Pipeline · Built with edge-tts, Pexels, moviepy, "
     "Playwright & Streamlit"
 )
-
