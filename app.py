@@ -31,7 +31,7 @@ import streamlit as st
 # Apply nest_asyncio so sync Playwright can run within Streamlit's event loop.
 nest_asyncio.apply()
 
-from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR
+from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR, VIDEO_CATEGORIES
 from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script, get_background_video
 from video_engine import render_final_video
@@ -68,6 +68,8 @@ _DEFAULTS = {
     # a st.rerun() after "Regenerate BG" — without this the form fields
     # reset to empty and the regen uses "nature" as a fallback.
     "last_keyword": "",
+    "last_source": "Pexels (Search)",
+    "last_category": list(VIDEO_CATEGORIES.keys())[0],
     "last_title": "",
     "last_description": "",
     "last_script": "",
@@ -201,11 +203,30 @@ with st.form("video_form"):
         value=st.session_state.last_script,
         key="f_script"
     )
+
+    bg_source = st.radio(
+        "🎬 Video Source",
+        ["Pexels (Search)", "Built-in (Most Used)"],
+        index=0 if st.session_state.last_source == "Pexels (Search)" else 1,
+        key="f_source",
+        horizontal=True
+    )
+
     keyword = st.text_input(
-        "🔍 Background Keyword",
+        "🔍 Search Keyword (Pexels)",
         placeholder='e.g. "ocean waves", "city night", "forest"',
         value=st.session_state.last_keyword,
-        key="f_keyword"
+        key="f_keyword",
+        disabled=(bg_source == "Built-in (Most Used)")
+    )
+
+    category = st.selectbox(
+        "📂 Choose Category (Built-in)",
+        options=list(VIDEO_CATEGORIES.keys()),
+        index=list(VIDEO_CATEGORIES.keys()).index(st.session_state.last_category),
+        key="f_category",
+        disabled=(bg_source == "Pexels (Search)"),
+        help="Select one of the pre-sourced most popular background categories."
     )
     video_title = st.text_input(
         "🏷️ Video Title",
@@ -229,7 +250,7 @@ with st.form("video_form"):
 #  Generate pipeline
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _run_generate(script: str, kw: str) -> None:
+def _run_generate(script: str, kw: str, source: str = "pexels", category: str | None = None) -> None:
     """Run the full TTS → fetch segments → stitch → render pipeline."""
     progress = st.progress(0, text="Starting…")
 
@@ -241,7 +262,13 @@ def _run_generate(script: str, kw: str) -> None:
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
-    clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
+    clips_metadata = get_clips_for_script(
+        script,
+        duration,
+        base_keyword=kw,
+        source_type=source,
+        category=category
+    )
     st.session_state.video_path = clips_metadata  # Store the list of clips
 
     # Step 3 — Render
@@ -256,25 +283,30 @@ def _run_generate(script: str, kw: str) -> None:
 if generate_btn:
     # Read from keys to be extra sure they match current state
     script_text = st.session_state.get("f_script", "").strip()
+    bg_source = st.session_state.get("f_source", "Pexels (Search)")
     keyword = st.session_state.get("f_keyword", "").strip()
+    category = st.session_state.get("f_category")
     video_title = st.session_state.get("f_title", "").strip()
     video_description = st.session_state.get("f_desc", "").strip()
 
     if not script_text:
         st.warning("Please enter a script.")
-    elif not keyword:
+    elif bg_source == "Pexels (Search)" and not keyword:
         st.warning("Please enter a background keyword.")
     else:
         # BUG FIX: Persist form values before running pipeline so they
         # survive st.rerun(). Without this, clicking "Regenerate BG"
         # after a rerun loses the keyword/title/description.
         st.session_state.last_keyword = keyword
+        st.session_state.last_source = bg_source
+        st.session_state.last_category = category
         st.session_state.last_title = video_title
         st.session_state.last_description = video_description
         st.session_state.last_script = script_text
 
         try:
-            _run_generate(script_text.strip(), keyword.strip())
+            source_type = "builtin" if bg_source == "Built-in (Most Used)" else "pexels"
+            _run_generate(script_text.strip(), keyword.strip(), source=source_type, category=category)
         except Exception as exc:
             st.error(f"❌ Pipeline error: {exc}")
 
@@ -339,8 +371,15 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         # Use the persisted script for semantic regeneration
                         script = st.session_state.last_script or "nature"
                         keyword = st.session_state.last_keyword or "nature"
+                        source = "builtin" if st.session_state.last_source == "Built-in (Most Used)" else "pexels"
+                        category = st.session_state.last_category
+
                         new_clips = get_clips_for_script(
-                            script, st.session_state.audio_duration, base_keyword=keyword
+                            script,
+                            st.session_state.audio_duration,
+                            base_keyword=keyword,
+                            source_type=source,
+                            category=category
                         )
                         st.session_state.video_path = new_clips
 
