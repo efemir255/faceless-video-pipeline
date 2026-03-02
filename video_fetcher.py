@@ -68,9 +68,11 @@ def get_background_video(
 
     chosen = max(valid_videos, key=lambda v: v.get("duration", 0))
     video_files = chosen["mp4_files"]
-    video_files.sort(key=lambda f: f.get("height", 0), reverse=True)
+    # Prefer height closest to 1920 for vertical video quality/performance balance
+    video_files.sort(key=lambda f: abs(f.get("height", 1920) - 1920))
     download_url = video_files[0].get("link")
 
+    logger.info("Downloading Pexels video: %s (height: %s)", download_url, video_files[0].get("height"))
     _download_file(download_url, output_path)
     return str(output_path.resolve())
 
@@ -89,40 +91,57 @@ def get_clips_for_script(
     if use_local_backgrounds:
         return _get_local_clips(total_duration, local_category)
     # ── 1. Split script into segments ──
-    # Split by period, exclamation, or question mark using regex
-    # We use a more robust regex that tries to avoid splitting on abbreviations
-    # like Mr. or Dr. but for simple faceless videos, basic splitting is often enough.
-    # We also filter out very short segments.
     script_clean = script.replace("\n", " ").strip()
-    raw_segments = re.split(r'(?<=[.!?])\s+', script_clean)
-    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 2]
+    raw_sentences = re.split(r'(?<=[.!?])\s+', script_clean)
+    sentences = [s.strip() for s in raw_sentences if len(s.strip()) > 2]
 
-    if not sentences or (len(sentences) == 1 and not sentences[0]):
+    if not sentences:
         sentences = [script_clean] if script_clean else ["..."]
 
-    # Estimate duration per sentence (simple word count ratio)
-    words = script.split()
-    total_words = max(len(words), 1)
+    # Group sentences into segments of ~8-10 seconds to avoid excessive downloads
+    total_words = max(len(script.split()), 1)
+    words_per_sec = total_words / total_duration if total_duration > 0 else 3
+    target_segment_words = words_per_sec * 8  # Target 8 seconds per clip
+
+    segments = []
+    curr_seg = []
+    curr_words = 0
+    for s in sentences:
+        s_words = len(s.split())
+        curr_seg.append(s)
+        curr_words += s_words
+        if curr_words >= target_segment_words:
+            segments.append(" ".join(curr_seg))
+            curr_seg = []
+            curr_words = 0
+    if curr_seg:
+        if segments:
+            segments[-1] += " " + " ".join(curr_seg)
+        else:
+            segments.append(" ".join(curr_seg))
+
     clips_metadata = []
 
-    def fetch_clip(i, sentence):
-        sent_words = len(sentence.split())
+    def fetch_clip(i, text):
+        sent_words = len(text.split())
         sent_duration = (sent_words / total_words) * total_duration
-        snippet = " ".join(sentence.split()[:3])
+        # Use first 2 words of the segment + base keyword for search
+        snippet = " ".join(text.split()[:2])
         keyword = f"{base_keyword} {snippet}".strip()
         
         try:
             filename = f"clip_{i:03d}.mp4"
             path = VIDEO_DIR / filename
+            logger.info("Fetching clip %d/%d for: %s", i+1, len(segments), keyword)
             clip_path = get_background_video(keyword, sent_duration, output_path=path)
             return {"path": clip_path, "duration": sent_duration, "index": i}
         except Exception as exc:
-            logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
+            logger.warning("Failed to fetch clip for '%s': %s", keyword, exc)
             return {"path": None, "duration": sent_duration, "index": i}
 
     # Parallel fetch using ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(lambda p: fetch_clip(*p), enumerate(sentences)))
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        results = list(executor.map(lambda p: fetch_clip(*p), enumerate(segments)))
 
     # Sort by index to maintain original order
     results.sort(key=lambda r: r["index"])
@@ -143,16 +162,27 @@ def get_clips_for_script(
 
 def _download_file(url: str, output_path: Path) -> None:
     """Helper to download a file with temp-rename protection."""
+    logger.info("Starting download to %s...", output_path.name)
     dl_resp = _session.get(url, stream=True, timeout=120)
     dl_resp.raise_for_status()
 
+    total_size = int(dl_resp.headers.get('content-length', 0))
+    downloaded = 0
+
     tmp_path = output_path.with_suffix(".tmp")
     with open(tmp_path, "wb") as fh:
-        for chunk in dl_resp.iter_content(chunk_size=1024 * 1024):
+        for chunk in dl_resp.iter_content(chunk_size=512 * 1024):
             if chunk:
                 fh.write(chunk)
-    
+                downloaded += len(chunk)
+                if total_size > 0:
+                    done = int(50 * downloaded / total_size)
+                    # Use stderr for progress to keep stdout clean for potential piping
+                    print(f"\r[{'=' * done}{' ' * (50-done)}] {downloaded/1024/1024:.1f}MB / {total_size/1024/1024:.1f}MB", end="", flush=True)
+
+    print() # New line after progress bar
     tmp_path.replace(output_path)
+    logger.info("Download complete: %s", output_path.name)
 
 
 def _get_local_clips(total_duration: float, category: str = None) -> list[dict]:
