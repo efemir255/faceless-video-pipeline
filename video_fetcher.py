@@ -100,7 +100,9 @@ def get_clips_for_script(
     for i, sentence in enumerate(sentences):
         sent_words = len(sentence.split())
         # Percentage of total duration this sentence takes
-        sent_duration = (sent_words / total_words) * total_duration
+        # BUG FIX: Protect against ZeroDivisionError
+        safe_total_words = total_words if total_words > 0 else 1
+        sent_duration = (sent_words / safe_total_words) * total_duration
         
         # Combine base keyword with a snippet of the sentence
         snippet = " ".join(sentence.split()[:3])

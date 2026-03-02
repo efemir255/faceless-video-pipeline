@@ -239,6 +239,7 @@ def _upload_youtube(
         kids_selectors = [
             "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']",
             "tp-yt-paper-radio-button:has-text('No, it\\'s not made for kids')",
+            "[aria-label*='not made for kids']",
             "#made-for-kids-group #off",
             "ytkc-made-for-kids-select #off"
         ]
