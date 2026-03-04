@@ -36,7 +36,7 @@ def run_auto_pipeline(category: str, platforms: list[str], source: str = "pexels
     try:
         # 2. TTS
         logger.info("Generating TTS...")
-        audio_path, duration = generate_audio(script)
+        audio_path, duration, timing_path = generate_audio(script)
 
         # 3. Clips
         logger.info("Fetching clips (source: %s, category: %s)...", source, video_category)
@@ -52,7 +52,11 @@ def run_auto_pipeline(category: str, platforms: list[str], source: str = "pexels
 
         # 4. Render
         logger.info("Rendering video...")
-        final_video_path = render_final_video(audio_path, clips_metadata)
+        final_video_path = render_final_video(
+            audio_path,
+            clips_metadata,
+            timing_path=timing_path
+        )
 
         # 5. Upload
         if platforms:

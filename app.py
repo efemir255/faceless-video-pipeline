@@ -35,8 +35,9 @@ from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR, VIDEO_CATEGORIES
 from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script, get_background_video
 from video_engine import render_final_video
+from bgm_fetcher import get_random_bgm
 from uploader import upload_video, manual_login
-from reddit_fetcher import get_reddit_story
+from reddit_fetcher import get_reddit_story, capture_post_screenshot
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,9 @@ _DEFAULTS = {
     "last_keyword": "",
     "last_source": "Pexels (Search)",
     "last_category": list(VIDEO_CATEGORIES.keys())[0],
+    "last_reddit_url": None,
+    "screenshot_path": None,
+    "bgm_path": None,
     "last_title": "",
     "last_description": "",
     "last_script": "",
@@ -182,6 +186,7 @@ with st.expander("🤖 Source Content from Reddit"):
             st.session_state.last_title = story["title"]
             st.session_state.last_description = f"Story from r/{story['subreddit']}\n#shorts #reddit"
             st.session_state.last_keyword = reddit_category.lower()
+            st.session_state.last_reddit_url = story["full_url"]
 
             # CRITICAL: Also update the widget keys directly so the form
             # reflects the changes even if the user has already typed.
@@ -228,6 +233,18 @@ with st.form("video_form"):
         disabled=(bg_source == "Pexels (Search)"),
         help="Select one of the pre-sourced most popular background categories."
     )
+
+    col_v1, col_v2 = st.columns(2)
+    with col_v1:
+        st.checkbox("🌓 Split-Screen", key="f_split_screen", help="Show two videos at once (top/bottom).")
+    with col_v2:
+        st.checkbox("📏 Progress Bar", key="f_progress_bar", help="Add a visual progress bar at the bottom.")
+
+    st.text_input("📣 Call to Action (CTA)", placeholder='e.g. "Subscribe for more!", "Like & Follow"', key="f_cta")
+
+    with st.expander("✨ AI Enhancements"):
+        st.checkbox("🤖 Auto-generate AI Hook", key="f_ai_hook", help="Rewrite the first sentence to be more engaging.")
+        st.checkbox("🎭 Add Random Emojis", key="f_emojis", help="Sprinkle emojis throughout the script.")
     video_title = st.text_input(
         "🏷️ Video Title",
         placeholder="Title for YouTube / TikTok",
@@ -241,6 +258,17 @@ with st.form("video_form"):
         value=st.session_state.last_description,
         key="f_desc"
     )
+
+    st.divider()
+    st.subheader("🎵 Background Music")
+    col_bgm1, col_bgm2 = st.columns(2)
+    with col_bgm1:
+        from config import BGM_DIR
+        bgm_options = ["None", "Random"] + [f.name for f in BGM_DIR.glob("*") if f.suffix in [".mp3", ".wav", ".m4a"]]
+        st.selectbox("BGM Track", bgm_options, key="bgm_selection")
+    with col_bgm2:
+        st.slider("BGM Volume", 0.0, 0.5, 0.1, 0.05, key="bgm_volume")
+
     generate_btn = st.form_submit_button(
         "🚀 Generate Video", use_container_width=True
     )
@@ -254,11 +282,52 @@ def _run_generate(script: str, kw: str, source: str = "pexels", category: str | 
     """Run the full TTS → fetch segments → stitch → render pipeline."""
     progress = st.progress(0, text="Starting…")
 
+    # Step -1 — AI Enhancements
+    if st.session_state.get("f_ai_hook"):
+        # Simple AI hook logic: find first sentence and make it punchy
+        sentences = re.split(r"(?<=[.!?])\s+", script)
+        if sentences:
+            sentences[0] = f"You won't believe this: {sentences[0]}"
+            script = " ".join(sentences)
+
+    if st.session_state.get("f_emojis"):
+        emojis = ["🔥", "😱", "🤯", "👀", "✨", "🚀", "💀", "😂"]
+        words = script.split()
+        for i in range(len(words)):
+            if random.random() < 0.1: # 10% chance
+                words[i] += " " + random.choice(emojis)
+        script = " ".join(words)
+
+    # Step 0 — Screenshot (if Reddit story)
+    screenshot_path = None
+    if st.session_state.get("last_reddit_url"):
+        progress.progress(5, text="📸 Capturing Reddit screenshot…")
+        try:
+            ss_filename = f"screenshot_{int(time.time())}.png"
+            ss_path = Path(VIDEO_DIR) / ss_filename
+            screenshot_path = capture_post_screenshot(st.session_state.last_reddit_url, ss_path)
+            st.session_state.screenshot_path = screenshot_path
+        except Exception as e:
+            logger.warning("Failed to capture screenshot: %s", e)
+
     # Step 1 — TTS
     progress.progress(10, text="🎙️ Generating audio…")
-    audio_path, duration = generate_audio(script)
+    audio_path, duration, timing_path = generate_audio(script)
     st.session_state.audio_path = audio_path
+    st.session_state.timing_path = timing_path
     st.session_state.audio_duration = duration
+
+    # Step 1.5 — BGM Selection
+    bgm_track = None
+    selection = st.session_state.get("bgm_selection", "None")
+    if selection == "Random":
+        bgm_track = get_random_bgm()
+    elif selection != "None":
+        from config import BGM_DIR
+        bgm_track = BGM_DIR / selection
+        if not bgm_track.exists():
+            bgm_track = None
+    st.session_state.bgm_path = str(bgm_track) if bgm_track else None
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
@@ -273,7 +342,17 @@ def _run_generate(script: str, kw: str, source: str = "pexels", category: str | 
 
     # Step 3 — Render
     progress.progress(70, text="🔧 Stitching and rendering final video…")
-    final_path = render_final_video(audio_path, clips_metadata)
+    final_path = render_final_video(
+        audio_path,
+        clips_metadata,
+        timing_path=timing_path,
+        screenshot_path=screenshot_path,
+        split_screen=st.session_state.get("f_split_screen", False),
+        bgm_path=st.session_state.get("bgm_path"),
+        bgm_volume=st.session_state.get("bgm_volume", 0.1),
+        progress_bar=st.session_state.get("f_progress_bar", False),
+        cta_text=st.session_state.get("f_cta")
+    )
     st.session_state.final_video_path = final_path
 
     progress.progress(100, text="✅ Video connected to story!")
@@ -384,7 +463,15 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         st.session_state.video_path = new_clips
 
                         final_path = render_final_video(
-                            st.session_state.audio_path, new_clips
+                            st.session_state.audio_path,
+                            new_clips,
+                            timing_path=st.session_state.get("timing_path"),
+                            screenshot_path=st.session_state.get("screenshot_path"),
+                            split_screen=st.session_state.get("f_split_screen", False),
+                            bgm_path=st.session_state.get("bgm_path"),
+                            bgm_volume=st.session_state.get("bgm_volume", 0.1),
+                            progress_bar=st.session_state.get("f_progress_bar", False),
+                            cta_text=st.session_state.get("f_cta")
                         )
                         st.session_state.final_video_path = final_path
                     st.rerun()

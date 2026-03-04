@@ -42,9 +42,10 @@ def generate_audio(
     text: str,
     output_path: str | Path | None = None,
     voice: str = DEFAULT_TTS_VOICE,
-) -> tuple[str, float]:
+) -> tuple[str, float, str]:
     """
     Generate TTS audio from *text* and save it as an MP3 file.
+    Returns (audio_path, duration, timing_json_path).
     """
     if not text or not text.strip():
         raise ValueError("Cannot generate audio from empty text.")
@@ -69,8 +70,9 @@ def generate_audio(
         if duration <= 0:
             raise RuntimeError(f"Audio file has invalid duration ({duration}s).")
 
+        timing_path = output_path.with_suffix(".json")
         logger.info("TTS audio saved -> %s  (%.1f s)", output_path.name, duration)
-        return str(output_path.resolve()), duration
+        return str(output_path.resolve()), duration, str(timing_path.resolve())
 
     except Exception as exc:
         logger.error("TTS generation failed: %s", exc)
