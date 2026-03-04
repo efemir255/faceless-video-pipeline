@@ -86,22 +86,24 @@ def render_final_video(
         if split_screen:
             logger.info("Applying split-screen mode...")
             try:
-                # Top half: original video
-                top_half = final_video.resized(height=VIDEO_HEIGHT // 2)
+                # Top half: original video (already 1080x1920)
+                # We crop the middle portion (1080x960) to fill the top half
+                top_half = final_video.cropped(y1=VIDEO_HEIGHT//4, y2=3*VIDEO_HEIGHT//4)
                 top_half = top_half.with_position(("center", "top"))
 
-                # Bottom half: use a default satisfying video (Minecraft/Soap)
-                # For simplicity, we'll try to find any video in BUILTIN_VIDEO_DIR
+                # Bottom half: use a default satisfying video
                 from config import BUILTIN_VIDEO_DIR
                 satisfying_videos = list(BUILTIN_VIDEO_DIR.glob("*.mp4"))
                 if satisfying_videos:
                     bottom_path = satisfying_videos[0]
-                    bottom_clip = _prepare_clip(bottom_path, audio_duration)
-                    bottom_half = bottom_clip.resized(height=VIDEO_HEIGHT // 2)
+                    bottom_clip_full = _prepare_clip(bottom_path, audio_duration)
+                    clips_to_close.append(bottom_clip_full)
+
+                    bottom_half = bottom_clip_full.cropped(y1=VIDEO_HEIGHT//4, y2=3*VIDEO_HEIGHT//4)
                     bottom_half = bottom_half.with_position(("center", "bottom"))
 
                     final_video = CompositeVideoClip([top_half, bottom_half], size=(VIDEO_WIDTH, VIDEO_HEIGHT))
-                    clips_to_close.append(bottom_clip)
+                    clips_to_close.append(final_video)
             except Exception as e:
                 logger.warning("Failed to apply split-screen: %s", e)
         
@@ -126,15 +128,18 @@ def render_final_video(
                 def make_bar(t):
                     progress = t / audio_duration
                     w = int(VIDEO_WIDTH * progress)
-                    if w <= 0: w = 1
-                    # Create a red bar
-                    img = Image.new("RGBA", (w, bar_h), (255, 0, 0, 255))
+                    # Constant width image to satisfy FFMPEG requirements
+                    img = Image.new("RGBA", (VIDEO_WIDTH, bar_h), (0, 0, 0, 0))
+                    if w > 0:
+                        draw = ImageDraw.Draw(img)
+                        draw.rectangle([0, 0, w, bar_h], fill=(255, 0, 0, 255))
                     return np.array(img)
 
                 from moviepy import VideoClip
                 bar_clip = VideoClip(make_bar, duration=audio_duration)
                 bar_clip = bar_clip.with_position(("left", "bottom"))
                 final_composite.append(bar_clip)
+                clips_to_close.append(bar_clip)
             except Exception as e:
                 logger.warning("Failed to add progress bar: %s", e)
 
@@ -367,22 +372,48 @@ def _create_text_clip_pillow(text, font_size=70, color="yellow", stroke_color="b
     if font is None:
         font = ImageFont.load_default()
 
-    # Determine text size
-    # Create a dummy image to get text dimensions
+    # Implement text wrapping
+    max_w = int(VIDEO_WIDTH * 0.8)
+    words = text.split()
+    lines = []
+    current_line = []
+
     dummy_img = Image.new("RGBA", (VIDEO_WIDTH, font_size * 2))
     draw = ImageDraw.Draw(dummy_img)
 
-    bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
-    w = bbox[2] - bbox[0] + 20
-    h = bbox[3] - bbox[1] + 20
+    for word in words:
+        test_line = " ".join(current_line + [word])
+        bbox = draw.textbbox((0, 0), test_line, font=font, stroke_width=stroke_width)
+        w = bbox[2] - bbox[0]
+        if w < max_w:
+            current_line.append(word)
+        else:
+            lines.append(" ".join(current_line))
+            current_line = [word]
+    lines.append(" ".join(current_line))
+
+    wrapped_text = "\n".join(lines)
+
+    # Determine final image size
+    bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font, stroke_width=stroke_width, align="center")
+    final_w = int(bbox[2] - bbox[0] + 40)
+    final_h = int(bbox[3] - bbox[1] + 40)
 
     # Create the actual image
-    img = Image.new("RGBA", (int(w), int(h)), (0, 0, 0, 0))
+    img = Image.new("RGBA", (final_w, final_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # Draw text with stroke
-    draw.text((10, 10), text, font=font, fill=color,
-              stroke_width=stroke_width, stroke_fill=stroke_color)
+    # Draw text with stroke centered
+    draw.multiline_text(
+        (final_w // 2, final_h // 2),
+        wrapped_text,
+        font=font,
+        fill=color,
+        stroke_width=stroke_width,
+        stroke_fill=stroke_color,
+        anchor="mm",
+        align="center"
+    )
 
     # Convert to moviepy clip
     return ImageClip(np.array(img))
