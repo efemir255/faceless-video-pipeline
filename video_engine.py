@@ -61,7 +61,8 @@ def render_final_video(
         else:
             video_clips = []
             for item in video_source:
-                clip = _prepare_clip(item["path"], item["duration"])
+                random_start = item.get("random_start", False)
+                clip = _prepare_clip(item["path"], item["duration"], random_start=random_start)
                 video_clips.append(clip)
         
         clips_to_close.extend(video_clips)
@@ -139,14 +140,21 @@ def render_final_video(
                 pass
 
 
-def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
+def _prepare_clip(path: str | Path, target_duration: float, random_start: bool = False) -> VideoFileClip:
     """Load, resize, and loop/trim a clip to match target duration."""
     clip = VideoFileClip(str(path), audio=False)
     
-    if clip.duration < target_duration:
-        clip = clip.with_effects([vfx.Loop(duration=target_duration)])
-    
-    clip = clip.subclipped(0, target_duration)
+    # If the source is longer than target and random_start is requested, pick a random offset
+    if random_start and clip.duration > target_duration:
+        import random
+        start_time = random.uniform(0, clip.duration - target_duration)
+        clip = clip.subclipped(start_time, start_time + target_duration)
+    else:
+        # Standard behavior: loop if shorter, trim if longer
+        if clip.duration < target_duration:
+            clip = clip.with_effects([vfx.Loop(duration=target_duration)])
+
+        clip = clip.subclipped(0, target_duration)
     
     w, h = clip.w, clip.h
     target_ratio = VIDEO_WIDTH / VIDEO_HEIGHT

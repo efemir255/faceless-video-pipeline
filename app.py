@@ -31,7 +31,7 @@ import streamlit as st
 # Apply nest_asyncio so sync Playwright can run within Streamlit's event loop.
 nest_asyncio.apply()
 
-from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR
+from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR, VIDEO_CATEGORIES
 from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script, get_background_video
 from video_engine import render_final_video
@@ -57,6 +57,8 @@ st.set_page_config(
 # ═══════════════════════════════════════════════════════════════════════════
 
 _DEFAULTS = {
+    "background_mode": "Pexels Search",
+    "local_category": list(VIDEO_CATEGORIES.keys())[0],
     "final_video_path": None,
     "audio_path": None,
     "audio_duration": None,
@@ -191,6 +193,28 @@ with st.expander("🤖 Source Content from Reddit"):
             # We use st.rerun() to populate the form fields in the next run
             st.rerun()
 
+# ── Visuals Selection ───────────────────────────────────────────────────
+
+with st.expander("🎨 Step 2: Visuals Selection", expanded=True):
+    bg_mode = st.radio(
+        "Background Source",
+        ["Pexels Search", "Local Library"],
+        index=0 if st.session_state.background_mode == "Pexels Search" else 1,
+        horizontal=True
+    )
+    st.session_state.background_mode = bg_mode
+
+    if bg_mode == "Local Library":
+        cat = st.selectbox(
+            "Select Background Category",
+            options=list(VIDEO_CATEGORIES.keys()),
+            index=list(VIDEO_CATEGORIES.keys()).index(st.session_state.local_category)
+        )
+        st.session_state.local_category = cat
+        st.info(f"Using random videos from: {cat}")
+    else:
+        st.info("Using Pexels API to search for relevant clips based on your keyword.")
+
 # ── Input form ───────────────────────────────────────────────────────────
 
 with st.form("video_form"):
@@ -241,7 +265,18 @@ def _run_generate(script: str, kw: str) -> None:
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
-    clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
+
+    # Check if using local library
+    bg_cat = None
+    if st.session_state.background_mode == "Local Library":
+        bg_cat = st.session_state.local_category
+
+    clips_metadata = get_clips_for_script(
+        script,
+        duration,
+        base_keyword=kw,
+        local_category=bg_cat
+    )
     st.session_state.video_path = clips_metadata  # Store the list of clips
 
     # Step 3 — Render
@@ -339,8 +374,16 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         # Use the persisted script for semantic regeneration
                         script = st.session_state.last_script or "nature"
                         keyword = st.session_state.last_keyword or "nature"
+
+                        bg_cat = None
+                        if st.session_state.background_mode == "Local Library":
+                            bg_cat = st.session_state.local_category
+
                         new_clips = get_clips_for_script(
-                            script, st.session_state.audio_duration, base_keyword=keyword
+                            script,
+                            st.session_state.audio_duration,
+                            base_keyword=keyword,
+                            local_category=bg_cat
                         )
                         st.session_state.video_path = new_clips
 

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from config import PEXELS_API_KEY, VIDEO_DIR
+from config import PEXELS_API_KEY, VIDEO_DIR, VIDEO_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,7 @@ def get_clips_for_script(
     script: str,
     total_duration: float,
     base_keyword: str = "nature",
+    local_category: str | None = None,
 ) -> list[dict]:
     """
     Split script into segments, fetch a relevant clip for each,
@@ -104,7 +105,23 @@ def get_clips_for_script(
         safe_total_words = total_words if total_words > 0 else 1
         sent_duration = (sent_words / safe_total_words) * total_duration
         
-        # Combine base keyword with a snippet of the sentence
+        # Determine clip source (Local Library or Pexels)
+        if local_category and local_category in VIDEO_CATEGORIES:
+            logger.info("Using local library: %s for segment %d", local_category, i+1)
+            cat_path = Path(VIDEO_CATEGORIES[local_category])
+            local_files = list(cat_path.glob("*.mp4"))
+            if local_files:
+                chosen_local = random.choice(local_files)
+                clips_metadata.append({
+                    "path": str(chosen_local.resolve()),
+                    "duration": sent_duration,
+                    "random_start": True # Signal to engine to use random_start
+                })
+                continue
+            else:
+                logger.warning("No MP4 files found in local category %s. Falling back to Pexels.", local_category)
+
+        # Fallback to Pexels
         snippet = " ".join(sentence.split()[:3])
         keyword = f"{base_keyword} {snippet}".strip()
         

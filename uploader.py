@@ -493,6 +493,16 @@ def upload_video(
                 logger.error("%s dispatcher failed: %s", platform.upper(), exc)
                 results[platform] = False
 
+        # BUG FIX: Allow manual verification before the browser context closes
+        if not HEADLESS_BROWSER:
+            logger.info("UPLOAD COMPLETE: Keeping browser open for manual verification...")
+            logger.info("Close the browser window when you are finished.")
+            try:
+                # Wait until all pages are closed or the context is closed
+                page.wait_for_event("close", timeout=0)
+            except Exception:
+                pass
+
         ctx.close()
 
     return results
