@@ -23,7 +23,7 @@ nest_asyncio.apply()
 
 from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR, VIDEO_CATEGORIES, BACKGROUNDS_DIR
 from tts_engine import generate_audio
-from video_fetcher import get_clips_for_script, get_background_video
+from video_fetcher import get_clips_for_script, get_background_video, download_category_starters
 from video_engine import render_final_video
 from uploader import upload_video, manual_login
 from reddit_fetcher import get_reddit_story
@@ -290,7 +290,15 @@ with st.expander("🎥 Step 2: Visuals Selection", expanded=True):
                         help="Choose a specific file from the built-in library."
                     )
                 else:
-                    st.warning(f"No videos found in {folder}. Please add .mp4 files.")
+                    st.warning(f"No videos found in {folder}.")
+                    if st.button("📥 Download Starter Videos", help=f"Fetch 3 starter videos for {bg_style} from Pexels"):
+                        with st.spinner(f"Downloading {bg_style} starters..."):
+                            count = download_category_starters(subdir, count=3)
+                            if count > 0:
+                                st.success(f"Downloaded {count} videos! Refreshing...")
+                                st.rerun()
+                            else:
+                                st.error("Failed to download. Check Pexels API key.")
             else:
                 st.error(f"Directory {folder} does not exist.")
 

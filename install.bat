@@ -48,4 +48,8 @@ echo.
 echo ✅ Installation Complete!
 echo 🚀 You can now use the shortcut on your Desktop to launch the app.
 echo.
+echo 💡 TIP: After setting your PEXELS_API_KEY in .env, you can run:
+echo    "venv\Scripts\python download_starters.py"
+echo    to automatically download starter background videos!
+echo.
 pause

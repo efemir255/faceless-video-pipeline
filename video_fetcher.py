@@ -185,6 +185,75 @@ def _download_file(url: str, output_path: Path) -> None:
     logger.info("Download complete: %s", output_path.name)
 
 
+def download_category_starters(category: str, count: int = 3) -> int:
+    """
+    Search Pexels for the category keyword and download 'count' videos
+    into the corresponding local subdirectory in assets/backgrounds.
+    Returns the number of videos successfully downloaded.
+    """
+    if not PEXELS_API_KEY:
+        logger.error("Cannot download starters: PEXELS_API_KEY is not set.")
+        return 0
+
+    target_dir = BACKGROUNDS_DIR / category
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use the category name as the search query
+    # E.g. "minecraft" -> "minecraft parkour" for better results
+    query_map = {
+        "minecraft": "minecraft parkour gameplay",
+        "gta5": "gta 5 v gameplay stunt",
+        "subway_surfers": "subway surfers gameplay",
+        "soap_cutting": "soap cutting satisfying",
+        "satisfying": "satisfying video",
+        "nature": "nature portrait",
+    }
+    query = query_map.get(category, f"{category} portrait")
+
+    headers = {"Authorization": PEXELS_API_KEY}
+    params = {
+        "query": query,
+        "orientation": "portrait",
+        "per_page": count * 2, # Fetch extra to ensure we get MP4s
+        "size": "large",
+    }
+
+    try:
+        resp = _session.get(_PEXELS_SEARCH_URL, headers=headers, params=params, timeout=15)
+        resp.raise_for_status()
+        videos = resp.json().get("videos", [])
+    except Exception as e:
+        logger.error("Failed to search for starters for %s: %s", category, e)
+        return 0
+
+    success_count = 0
+    for i, v in enumerate(videos):
+        if success_count >= count:
+            break
+
+        mp4_files = [f for f in v.get("video_files", []) if f.get("file_type", "").startswith("video/mp4")]
+        if not mp4_files:
+            continue
+
+        # Prefer 1080p
+        mp4_files.sort(key=lambda f: abs(f.get("height", 1920) - 1920))
+        download_url = mp4_files[0].get("link")
+
+        output_path = target_dir / f"starter_{i:02d}_{v['id']}.mp4"
+        if output_path.exists():
+            success_count += 1
+            continue
+
+        try:
+            logger.info("Downloading starter %d/%d for %s...", success_count+1, count, category)
+            _download_file(download_url, output_path)
+            success_count += 1
+        except Exception as e:
+            logger.error("Failed to download starter %d for %s: %s", i, category, e)
+
+    return success_count
+
+
 def _get_local_clips(total_duration: float, category: str = None) -> list[dict]:
     """
     Search assets/backgrounds/{category} for MP4 files. If category is not provided,
