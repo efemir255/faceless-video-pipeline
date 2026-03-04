@@ -219,17 +219,18 @@ def _generate_subtitle_clips(subtitles_path: str | Path) -> list:
         if duration <= 0:
             continue
 
-        # Create a stylized text clip
-        # center of screen, slightly below middle
+        # Create a stylized text clip with a background box for maximum visibility
         txt = TextClip(
             text=text,
-            font_size=80,
+            font_size=90,
             color="yellow",
             stroke_color="black",
-            stroke_width=2,
-            method="caption", # Wraps if needed
-            size=(int(VIDEO_WIDTH * 0.8), None)
-        ).with_start(start).with_duration(duration).with_position(("center", int(VIDEO_HEIGHT * 0.6)))
+            stroke_width=3,
+            bg_color="rgba(0,0,0,0.5)", # 50% transparent black background
+            method="caption",
+            size=(int(VIDEO_WIDTH * 0.9), None),
+            text_align="center"
+        ).with_start(start).with_duration(duration).with_position(("center", int(VIDEO_HEIGHT * 0.7)))
 
         subtitle_clips.append(txt)
 
@@ -274,37 +275,50 @@ def _generate_subtitle_clips_pillow(word_data: list) -> list:
         if duration <= 0:
             continue
 
-        # Create a transparent image for the text
-        # We'll make it the width of the video and enough height for the text
-        img = Image.new("RGBA", (VIDEO_WIDTH, 200), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
+        # We'll create a canvas wide enough for word wrapping if needed
+        # but for Shorts-style, we usually want one word at a time
+        padding = 20
 
-        # Get text size for centering
-        # Use getbbox or textbbox in newer Pillow
+        # Estimate height based on font size + padding
+        # We create a dummy draw to measure
+        dummy_img = Image.new("RGBA", (VIDEO_WIDTH, 300), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(dummy_img)
+
         try:
             bbox = draw.textbbox((0, 0), text, font=font)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
         except AttributeError:
-            # Fallback for old Pillow
             text_w, text_h = draw.textsize(text, font=font)
 
-        # Draw text with outline (approximate stroke by drawing multiple times)
-        x = (VIDEO_WIDTH - text_w) // 2
-        y = (200 - text_h) // 2
+        # Create the actual background box based on text size
+        box_w = int(text_w + padding * 4)
+        box_h = int(text_h + padding * 2)
 
-        # Stroke
-        for offset in [(-2,-2), (-2,2), (2,-2), (2,2)]:
-            draw.text((x+offset[0], y+offset[1]), text, font=font, fill="black")
+        # Create a transparent image for the whole video width to make positioning easier
+        img = Image.new("RGBA", (VIDEO_WIDTH, box_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Draw background rectangle
+        x_box = (VIDEO_WIDTH - box_w) // 2
+        draw.rectangle([x_box, 0, x_box + box_w, box_h], fill=(0, 0, 0, 128)) # 50% opacity
+
+        # Draw text centered in that box
+        x_text = (VIDEO_WIDTH - text_w) // 2
+        y_text = (box_h - text_h) // 2 - 5 # Slight adjustment
+
+        # Stroke (draw 8 times for a thicker border)
+        for ox, oy in [(-3,-3), (-3,3), (3,-3), (3,3), (0,-3), (0,3), (-3,0), (3,0)]:
+            draw.text((x_text + ox, y_text + oy), text, font=font, fill="black")
 
         # Main text
-        draw.text((x, y), text, font=font, fill="yellow")
+        draw.text((x_text, y_text), text, font=font, fill="yellow")
 
-        # Convert PIL image to numpy array for MoviePy
+        # Convert to numpy array for MoviePy
         import numpy as np
         img_array = np.array(img)
 
-        txt_clip = ImageClip(img_array).with_start(start).with_duration(duration).with_position(("center", int(VIDEO_HEIGHT * 0.6)))
+        txt_clip = ImageClip(img_array).with_start(start).with_duration(duration).with_position(("center", int(VIDEO_HEIGHT * 0.7)))
         subtitle_clips.append(txt_clip)
 
     return subtitle_clips
