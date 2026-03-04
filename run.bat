@@ -3,6 +3,10 @@
 
 echo 🚀 Starting Faceless Video Pipeline...
 
+:: 0. Auto-update from GitHub
+echo 🔄 Checking for updates...
+git pull origin feature/subtitles-and-bugfixes-10596328581187451414
+
 :: 1. Ensure .env exists
 if not exist .env (
     if exist .env.example (
