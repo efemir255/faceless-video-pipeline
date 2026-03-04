@@ -24,7 +24,11 @@ FORBIDDEN_KEYWORDS = [
 SUBREDDITS = {
     "scary": ["shortscarystories", "nosleep", "creepy"],
     "funny": ["tifu", "funny", "humor"],
-    "interesting": ["AskReddit", "unpopularopinion", "todayilearned"]
+    "interesting": ["AskReddit", "unpopularopinion", "todayilearned"],
+    "drama": ["AmItheAsshole", "relationships"],
+    "tales": ["TalesFromTechSupport"],
+    "entitled": ["entitledparents"],
+    "revenge": ["ProRevenge"]
 }
 
 def get_reddit_story(category: str = "interesting", seen_ids: set | None = None):
@@ -61,6 +65,10 @@ def get_reddit_story(category: str = "interesting", seen_ids: set | None = None)
             
             # Skip stickied, NSFW, or already seen posts
             if post.get("stickied") or post.get("over_18") or post_id in seen_ids:
+                continue
+
+            # Skip videos/images
+            if post.get("is_video") or post.get("is_gallery") or not post.get("is_self"):
                 continue
 
             story_title = post.get("title", "")

@@ -82,6 +82,11 @@ VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
 VIDEO_FPS = 30
 
+# Use a specific GPU ID for NVENC (e.g., "0" or "1").
+# If None, the app will try to detect the best available GPU.
+# RENDER_GPU_ID=1 in .env
+RENDER_GPU_ID = os.getenv("RENDER_GPU_ID", None)
+
 # ─── TTS (edge-tts) ─────────────────────────────────────────────────────
 # Full list of voices:  edge-tts --list-voices
 DEFAULT_TTS_VOICE = "en-US-ChristopherNeural"

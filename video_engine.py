@@ -21,9 +21,42 @@ from moviepy import (
     vfx,
 )
 
-from config import VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, FINAL_DIR
+import subprocess
+from config import VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, FINAL_DIR, RENDER_GPU_ID
 
 logger = logging.getLogger(__name__)
+
+
+def _get_best_gpu_id() -> str:
+    """
+    Try to detect the best available NVIDIA GPU.
+    Prioritizes dedicated cards (GPU 1, 2...) over integrated ones (GPU 0).
+    """
+    if RENDER_GPU_ID is not None:
+        return str(RENDER_GPU_ID)
+
+    try:
+        # Use nvidia-smi to list GPUs and their index
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        gpu_indices = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+        if len(gpu_indices) > 1:
+            # If multiple GPUs found, assume 0 is the CPU's GPU and pick 1
+            logger.info("Multiple GPUs detected: %s. Selecting GPU 1 (dedicated).", gpu_indices)
+            return "1"
+        elif gpu_indices:
+            # Only one GPU, pick 0
+            return "0"
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        # Fallback if nvidia-smi is not available
+        pass
+
+    return "0"
 
 
 def render_final_video(
@@ -87,10 +120,11 @@ def render_final_video(
         
         logger.info("Rendering final video → %s", output_path.name)
 
-        # GPU acceleration attempt (RTX 2060 is GPU 1)
+        # GPU acceleration attempt
         # Fallback to CPU if NVENC fails
         try:
-            logger.info("Attempting GPU accelerated rendering (NVENC)...")
+            gpu_id = _get_best_gpu_id()
+            logger.info("Attempting GPU accelerated rendering (NVENC) on GPU %s...", gpu_id)
             # We must use 'codec' instead of h264_nvenc directly if we want to pass ffmpeg_params correctly
             # Actually moviepy expects the encoder name in 'codec'
             final_clip.write_videofile(
@@ -99,7 +133,7 @@ def render_final_video(
                 codec="h264_nvenc",
                 audio_codec="aac",
                 threads=4,
-                ffmpeg_params=["-gpu", "1", "-preset", "p4", "-tune", "hq"],
+                ffmpeg_params=["-gpu", gpu_id, "-preset", "p4", "-tune", "hq"],
                 logger=None,
             )
         except Exception as e:
