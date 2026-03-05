@@ -43,13 +43,27 @@ PROJECT_ROOT = _THIS_DIR
 
 # ─── Output Directories ─────────────────────────────────────────────────
 OUTPUT_DIR = PROJECT_ROOT / "output"
-AUDIO_DIR = OUTPUT_DIR / "audio"
-VIDEO_DIR = OUTPUT_DIR / "video"
-FINAL_DIR = OUTPUT_DIR / "final"
+ASSETS_DIR = PROJECT_ROOT / "assets"
+AUDIO_DIR = ASSETS_DIR / "audio"
+BGM_DIR = AUDIO_DIR / "bgm"
+VIDEO_DIR = ASSETS_DIR / "backgrounds"
+FINAL_DIR = ASSETS_DIR / "final"
 
 # Create directories on import so other modules never hit FileNotFoundError
-for _dir in (AUDIO_DIR, VIDEO_DIR, FINAL_DIR):
+for _dir in (AUDIO_DIR, BGM_DIR, VIDEO_DIR, FINAL_DIR, OUTPUT_DIR):
     _dir.mkdir(parents=True, exist_ok=True)
+
+# ─── Built-in Background Videos ──────────────────────────────────────────
+BUILTIN_VIDEO_DIR = VIDEO_DIR / "builtin"
+BUILTIN_VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+
+VIDEO_CATEGORIES = {
+    "Minecraft": "minecraft_parkour.mp4",
+    "GTA 5": "gta_parkour.mp4",
+    "Subway Surfers": "subway_surfers.mp4",
+    "Soap Cutting": "soap_cutting.mp4",
+    "Satisfying": "satisfying.mp4",
+}
 
 # ─── Pexels API ──────────────────────────────────────────────────────────
 # Get a free key at https://www.pexels.com/api/
@@ -71,7 +85,7 @@ VIDEO_FPS = 30
 
 # ─── TTS (edge-tts) ─────────────────────────────────────────────────────
 # Full list of voices:  edge-tts --list-voices
-DEFAULT_TTS_VOICE = "en-US-ChristopherNeural"
+DEFAULT_TTS_VOICE = os.getenv("TTS_VOICE", "en-US-AndrewMultilingualNeural")
 
 # ─── Playwright / Browser Automation ────────────────────────────────────
 # Persistent browser profile so you only log in once.
@@ -88,7 +102,7 @@ REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "FacelessVideoPipeline/0.1.0"
 
 # Run Playwright in headless mode? (True/False)
 # HEADLESS_BROWSER=true/false in .env
-HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "false").lower() == "true"
+HEADLESS_BROWSER = os.getenv("HEADLESS_BROWSER", "true").lower() == "true"
 
 # ─── Platform URLs ───────────────────────────────────────────────────────
 YOUTUBE_STUDIO_UPLOAD_URL = "https://studio.youtube.com"

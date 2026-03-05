@@ -284,7 +284,8 @@ def _upload_youtube(
         _wait_for_upload_processing(page, timeout_sec=300)
 
         # 10 — Publish (Re-locate the button to avoid stale element issues)
-        done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button").first
+        # BUG FIX: Sometimes it's #publish-button or #done-button depending on the account status
+        done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button, #publish-button").first
         done_btn.wait_for(state="visible", timeout=15_000)
         done_btn.click()
 
@@ -395,7 +396,8 @@ def _upload_tiktok(
         time.sleep(2)
 
         # 4 — Post
-        post_btn = page.locator('button:has-text("Post")')
+        # BUG FIX: Select the button more precisely to avoid clicking background elements
+        post_btn = page.locator('button[data-e2e="post_video"], button:has-text("Post")').first
         post_btn.wait_for(state="visible", timeout=15_000)
         post_btn.click()
 

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from config import PEXELS_API_KEY, VIDEO_DIR
+from config import PEXELS_API_KEY, VIDEO_DIR, VIDEO_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -78,16 +78,42 @@ def get_clips_for_script(
     script: str,
     total_duration: float,
     base_keyword: str = "nature",
+    source_type: str = "pexels",
+    category: str | None = None,
 ) -> list[dict]:
     """
     Split script into segments, fetch a relevant clip for each,
     and return a list of (path, duration) dicts.
     """
+    # If source_type is 'builtin', use the category mapped keyword or local file
+    builtin_path = None
+    if source_type == "builtin" and category in VIDEO_CATEGORIES:
+        val = VIDEO_CATEGORIES[category]
+        full_val_path = BUILTIN_VIDEO_DIR / val
+        if val.endswith(".mp4") and full_val_path.exists():
+            builtin_path = full_val_path
+        else:
+            base_keyword = val  # Use the category keyword for Pexels
+
     # ── 1. Split script into segments ──
+    # Pre-process to avoid splitting on common abbreviations
+    abbrs = ["Mr.", "Mrs.", "Dr.", "Ms.", "Jr.", "Sr.", "etc.", "vol.", "vs."]
+    script_protected = script.replace("\n", " ")
+    for a in abbrs:
+        # Replace "Mr." with "Mr|" temporarily
+        script_protected = script_protected.replace(a, a[:-1] + "|")
+
     # Split by period, exclamation, or question mark using regex
-    # Handle common abbreviations to avoid splitting prematurely
-    raw_segments = re.split(r'(?<=[.!?])\s+', script.replace("\n", " "))
-    sentences = [s.strip() for s in raw_segments if len(s.strip()) > 5]
+    raw_segments = re.split(r'(?<=[.!?])\s+', script_protected)
+
+    # Restore abbreviations and clean up
+    sentences = []
+    for s in raw_segments:
+        s_restored = s.strip()
+        for a in abbrs:
+            s_restored = s_restored.replace(a[:-1] + "|", a)
+        if len(s_restored) > 5:
+            sentences.append(s_restored)
 
     if not sentences:
         sentences = [script.strip()]
@@ -111,35 +137,74 @@ def get_clips_for_script(
         try:
             filename = f"clip_{i:03d}.mp4"
             path = VIDEO_DIR / filename
-            clip_path = get_background_video(keyword, sent_duration, output_path=path)
-            clips_metadata.append({
-                "path": clip_path,
-                "duration": sent_duration
-            })
+
+            if builtin_path:
+                # Use the local file for all segments, but wrap in a dict
+                # that tells the engine to pick a random subclip
+                clip_path = builtin_path
+                clips_metadata.append({
+                    "path": clip_path,
+                    "duration": sent_duration,
+                    "random_start": True
+                })
+            else:
+                clip_path = get_background_video(keyword, sent_duration, output_path=path)
+                clips_metadata.append({
+                    "path": clip_path,
+                    "duration": sent_duration
+                })
         except Exception as exc:
             logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
             # Fallback to a generic keyword if specific one fails
             if i > 0 and clips_metadata:
-                # Reuse previous clip metadata if possible (it will be looped in engine)
-                clips_metadata.append(clips_metadata[-1])
+                # Reuse previous clip metadata but adjust duration
+                fallback = clips_metadata[-1].copy()
+                fallback["duration"] = sent_duration
+                clips_metadata.append(fallback)
             else:
-                # Absolute fallback
-                path = VIDEO_DIR / f"clip_{i:03d}.mp4"
-                clip_path = get_background_video("nature", sent_duration, output_path=path)
-                clips_metadata.append({"path": clip_path, "duration": sent_duration})
+                # Absolute fallback — try generic 'nature' or any builtin video
+                try:
+                    path = VIDEO_DIR / f"clip_{i:03d}.mp4"
+                    clip_path = get_background_video("nature", sent_duration, output_path=path)
+                    clips_metadata.append({"path": clip_path, "duration": sent_duration})
+                except Exception:
+                    # Last resort: use a builtin if any exist
+                    satisfying = list(BUILTIN_VIDEO_DIR.glob("*.mp4"))
+                    if satisfying:
+                        clips_metadata.append({
+                            "path": satisfying[0],
+                            "duration": sent_duration,
+                            "random_start": True
+                        })
+                    else:
+                        raise RuntimeError("Failed to fetch any background video and no built-ins available.")
 
     return clips_metadata
 
 
-def _download_file(url: str, output_path: Path) -> None:
-    """Helper to download a file with temp-rename protection."""
-    dl_resp = _session.get(url, stream=True, timeout=120)
-    dl_resp.raise_for_status()
+def _download_file(url: str, output_path: Path, retries: int = 3) -> None:
+    """Helper to download a file with temp-rename protection and retries."""
+    for attempt in range(retries):
+        try:
+            dl_resp = _session.get(url, stream=True, timeout=60)
+            dl_resp.raise_for_status()
 
-    tmp_path = output_path.with_suffix(".tmp")
-    with open(tmp_path, "wb") as fh:
-        for chunk in dl_resp.iter_content(chunk_size=1024 * 1024):
-            if chunk:
-                fh.write(chunk)
-    
-    tmp_path.replace(output_path)
+            tmp_path = output_path.with_suffix(".tmp")
+            with open(tmp_path, "wb") as fh:
+                for chunk in dl_resp.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        fh.write(chunk)
+
+            # Check if file is non-empty and has content
+            if tmp_path.exists() and tmp_path.stat().st_size > 1000:
+                tmp_path.replace(output_path)
+                return
+            else:
+                raise ValueError("Downloaded file is too small or empty.")
+
+        except Exception as e:
+            logger.warning("Download attempt %d failed: %s", attempt + 1, e)
+            if attempt == retries - 1:
+                raise
+            import time
+            time.sleep(2 ** attempt)  # Exponential backoff
