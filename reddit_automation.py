@@ -7,7 +7,7 @@ import logging
 import sys
 from pathlib import Path
 
-from reddit_fetcher import get_reddit_story
+from reddit_fetcher import get_reddit_story, capture_post_screenshot
 from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script
 from video_engine import render_final_video
@@ -16,7 +16,16 @@ from config import FINAL_DIR
 
 logger = logging.getLogger(__name__)
 
-def run_auto_pipeline(category: str, platforms: list[str], source: str = "pexels", video_category: str | None = None):
+def run_auto_pipeline(
+    category: str,
+    platforms: list[str],
+    source: str = "pexels",
+    video_category: str | None = None,
+    use_screenshot: bool = False,
+    split_screen: bool = False,
+    progress_bar: bool = False,
+    cta: str | None = None
+):
     """
     Fetch -> TTS -> Clips -> Render -> Upload
     """
@@ -38,6 +47,16 @@ def run_auto_pipeline(category: str, platforms: list[str], source: str = "pexels
         logger.info("Generating TTS...")
         audio_path, duration, timing_path = generate_audio(script)
 
+        # 2.5 Screenshot (Optional)
+        screenshot_path = None
+        if use_screenshot and story.get("full_url"):
+            logger.info("Capturing Reddit screenshot...")
+            ss_path = Path(FINAL_DIR).parent / "backgrounds" / f"screenshot_{story['id']}.png"
+            try:
+                screenshot_path = capture_post_screenshot(story["full_url"], ss_path)
+            except Exception as e:
+                logger.warning("Screenshot capture failed: %s", e)
+
         # 3. Clips
         logger.info("Fetching clips (source: %s, category: %s)...", source, video_category)
         # Use a generic keyword related to the category
@@ -55,7 +74,11 @@ def run_auto_pipeline(category: str, platforms: list[str], source: str = "pexels
         final_video_path = render_final_video(
             audio_path,
             clips_metadata,
-            timing_path=timing_path
+            timing_path=timing_path,
+            screenshot_path=screenshot_path,
+            split_screen=split_screen,
+            progress_bar=progress_bar,
+            cta_text=cta
         )
 
         # 5. Upload
@@ -79,10 +102,23 @@ if __name__ == "__main__":
     parser.add_argument("--source", choices=["pexels", "builtin"], default="pexels", help="Background source")
     parser.add_argument("--video-category", help="Built-in category name (if source is builtin)")
     parser.add_argument("--upload", nargs="+", choices=["youtube", "tiktok"], help="Platforms to upload to")
+    parser.add_argument("--screenshot", action="store_true", help="Capture Reddit screenshot hook")
+    parser.add_argument("--split-screen", action="store_true", help="Enable split-screen mode")
+    parser.add_argument("--progress-bar", action="store_true", help="Enable progress bar")
+    parser.add_argument("--cta", help="Call to Action text")
 
     args = parser.parse_args()
 
     # Configure logging to console for CLI use
     logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
 
-    run_auto_pipeline(args.category, args.upload, source=args.source, video_category=args.video_category)
+    run_auto_pipeline(
+        args.category,
+        args.upload,
+        source=args.source,
+        video_category=args.video_category,
+        use_screenshot=args.screenshot,
+        split_screen=args.split_screen,
+        progress_bar=args.progress_bar,
+        cta=args.cta
+    )

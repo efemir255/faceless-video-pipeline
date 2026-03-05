@@ -157,13 +157,27 @@ def get_clips_for_script(
             logger.warning("Failed to fetch clip for '%s': %s. Using fallback.", keyword, exc)
             # Fallback to a generic keyword if specific one fails
             if i > 0 and clips_metadata:
-                # Reuse previous clip metadata if possible (it will be looped in engine)
-                clips_metadata.append(clips_metadata[-1])
+                # Reuse previous clip metadata but adjust duration
+                fallback = clips_metadata[-1].copy()
+                fallback["duration"] = sent_duration
+                clips_metadata.append(fallback)
             else:
-                # Absolute fallback
-                path = VIDEO_DIR / f"clip_{i:03d}.mp4"
-                clip_path = get_background_video("nature", sent_duration, output_path=path)
-                clips_metadata.append({"path": clip_path, "duration": sent_duration})
+                # Absolute fallback — try generic 'nature' or any builtin video
+                try:
+                    path = VIDEO_DIR / f"clip_{i:03d}.mp4"
+                    clip_path = get_background_video("nature", sent_duration, output_path=path)
+                    clips_metadata.append({"path": clip_path, "duration": sent_duration})
+                except Exception:
+                    # Last resort: use a builtin if any exist
+                    satisfying = list(BUILTIN_VIDEO_DIR.glob("*.mp4"))
+                    if satisfying:
+                        clips_metadata.append({
+                            "path": satisfying[0],
+                            "duration": sent_duration,
+                            "random_start": True
+                        })
+                    else:
+                        raise RuntimeError("Failed to fetch any background video and no built-ins available.")
 
     return clips_metadata
 
