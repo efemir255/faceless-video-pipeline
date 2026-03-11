@@ -52,13 +52,14 @@ import shutil
 def _get_browser_context(playwright):
     """Return a persistent Chromium context that keeps login cookies."""
     # BUG FIX: Ensure the profile directory is not locked by a previous 
-    # crashed instance. Windows-specific: SingletonLock files.
-    lock_file = Path(BROWSER_USER_DATA_DIR) / "SingletonLock"
-    if lock_file.exists():
-        try:
-            lock_file.unlink()
-        except Exception:
-             pass
+    # crashed instance.
+    for lock_name in ["SingletonLock", "SingletonCookie"]:
+        lock_file = Path(BROWSER_USER_DATA_DIR) / lock_name
+        if lock_file.exists():
+            try:
+                lock_file.unlink()
+            except Exception:
+                 pass
 
     context = playwright.chromium.launch_persistent_context(
         user_data_dir=BROWSER_USER_DATA_DIR,
@@ -214,8 +215,13 @@ def _upload_youtube(
             return False
 
         # 5 — Fill in title
-        # BUG FIX: Use more robust title selectors
-        title_box = page.locator("#title-textarea #textbox, #textbox[aria-label='Add a title that describes your video']").first
+        # BUG FIX: Use more robust title selectors including multi-strategy ARIA labels
+        title_box = page.locator(
+            "#title-textarea #textbox, "
+            "#textbox[aria-label*='title'], "
+            "#textbox[aria-label='Add a title that describes your video'], "
+            "ytcp-social-suggestion-textarea#title-textarea #textbox"
+        ).first
         title_box.wait_for(state="visible", timeout=20_000)
         title_box.click(click_count=3)
         page.keyboard.press("Backspace")
@@ -223,8 +229,13 @@ def _upload_youtube(
         logger.debug("Filled title: %s", title)
 
         # 6 — Fill in description
-        # BUG FIX: Handle the description box more reliably
-        desc_box = page.locator("#description-textarea #textbox, #textbox[aria-label='Tell viewers about your video']").first
+        # BUG FIX: Handle the description box more reliably with multi-strategy selectors
+        desc_box = page.locator(
+            "#description-textarea #textbox, "
+            "#textbox[aria-label*='Tell viewers'], "
+            "#textbox[aria-label='Tell viewers about your video'], "
+            "ytcp-social-suggestion-textarea#description-textarea #textbox"
+        ).first
         try:
             desc_box.wait_for(state="visible", timeout=15_000)
             desc_box.click()
@@ -311,40 +322,47 @@ def _upload_youtube(
     return False
 
 
-def _wait_for_upload_processing(page, timeout_sec: int = 300) -> None:
+def _wait_for_upload_processing(page, timeout_sec: int = 600) -> None:
     """
-    Poll YouTube Studio until the video finishes processing.
-
-    YouTube shows a progress text like "Uploading 45%…" or "Processing…"
-    and the Done button stays disabled until it's ready. We watch for the
-    progress text to disappear or the button to become enabled.
+    Poll YouTube Studio until the video is fully uploaded and processed.
+    Increases timeout and uses a stricter check for the 'Done' button.
     """
     start = time.time()
     last_log_time = start
-    poll_interval = 3  # seconds
+    poll_interval = 5  # seconds
+
+    logger.info("Waiting for YouTube to finish processing (timeout: %ds)...", timeout_sec)
 
     while time.time() - start < timeout_sec:
-        # Check if Done button is enabled (no "disabled" attribute)
-        done_btn = page.locator("#done-button")
-        is_disabled = done_btn.get_attribute("disabled")
-        if is_disabled is None:
-            # Button is enabled — processing is done
+        # 1. Check if the "Upload complete" text is visible or Done is clickable
+        try:
+            # Look for various "finished" indicators
+            status_text = page.locator(".status-label-container").inner_text(timeout=2000).lower()
+            if "complete" in status_text or "finished" in status_text:
+                 logger.info("YouTube reports upload complete via status label.")
+                 return
+        except Exception:
+            pass
+
+        # 2. Check the Done/Publish button state
+        done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button").first
+        if done_btn.is_visible() and done_btn.is_enabled():
+            logger.info("Done button is now enabled.")
             return
 
         now = time.time()
         elapsed = int(now - start)
-        if now - last_log_time >= 15:
-            # Check for progress text periodically to log status
+        if now - last_log_time >= 20:
             try:
-                progress = page.locator(".progress-label").inner_text(timeout=2_000)
-                logger.info("Upload progress: %s (%ds elapsed)", progress, elapsed)
+                progress = page.locator(".progress-label, .status-label-container").inner_text(timeout=3_000)
+                logger.info("Upload status: %s (%ds elapsed)", progress.strip(), elapsed)
             except Exception:
-                logger.info("Waiting for processing… (%ds elapsed)", elapsed)
+                logger.info("Waiting for YouTube processing... (%ds elapsed)", elapsed)
             last_log_time = now
 
         time.sleep(poll_interval)
 
-    logger.warning("Upload processing timed out after %ds — clicking Done anyway.", timeout_sec)
+    logger.warning("Upload processing timed out after %ds.", timeout_sec)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -378,8 +396,26 @@ def _upload_tiktok(
             file_input = page.locator('input[type="file"]').first
 
         file_input.set_input_files(video_path)
-        logger.info("File selected, waiting for processing…")
-        time.sleep(8)
+        logger.info("File selected, waiting for TikTok upload to complete…")
+
+        # Polling for upload completion on TikTok
+        start_time = time.time()
+        upload_complete = False
+        while time.time() - start_time < 300: # 5 min timeout
+            try:
+                # TikTok usually shows a "100%" or specific success text
+                status = page.locator(".upload-stage, .file-list-item-status").inner_text(timeout=2000).lower()
+                if "100%" in status or "uploaded" in status or "edit" in status:
+                    upload_complete = True
+                    break
+            except Exception:
+                pass
+            time.sleep(5)
+
+        if not upload_complete:
+            logger.warning("TikTok upload completion not detected via status, proceeding anyway.")
+        else:
+            logger.info("TikTok upload appears complete.")
 
         # 3 — Fill caption
         caption_editor = page.locator('div[contenteditable="true"]').first
@@ -395,7 +431,12 @@ def _upload_tiktok(
         time.sleep(2)
 
         # 4 — Post
-        post_btn = page.locator('button:has-text("Post")')
+        # Use more robust selector for Post button (could be text or specific classes)
+        post_btn = page.locator(
+            'button:has-text("Post"), '
+            '[data-e2e="post-button"], '
+            '.upload-btn-button'
+        ).first
         post_btn.wait_for(state="visible", timeout=15_000)
         post_btn.click()
 
@@ -483,14 +524,25 @@ def upload_video(
                 results[platform] = False
                 continue
             
-            logger.info("Starting upload flow for %s...", platform.upper())
-            try:
-                # We pass the shared page instance so we don't crash 
-                # opening/closing targets on Windows.
-                results[platform] = fn(page, video_path, title, description)
-            except Exception as exc:
-                logger.error("%s dispatcher failed: %s", platform.upper(), exc)
-                results[platform] = False
+            # Implementation of simple retry loop for uploads
+            max_attempts = 2
+            success = False
+            for attempt in range(max_attempts):
+                logger.info("Starting upload flow for %s (attempt %d/%d)...",
+                            platform.upper(), attempt + 1, max_attempts)
+                try:
+                    success = fn(page, video_path, title, description)
+                    if success:
+                        break
+                    logger.warning("%s upload attempt %d failed.", platform.upper(), attempt + 1)
+                except Exception as exc:
+                    logger.error("%s dispatcher attempt %d failed: %s",
+                                 platform.upper(), attempt + 1, exc)
+
+                if attempt < max_attempts - 1:
+                    time.sleep(10) # Wait before retry
+
+            results[platform] = success
 
         ctx.close()
 

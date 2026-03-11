@@ -6,6 +6,7 @@ the audio duration, and exporting a ready-to-upload MP4.
 """
 
 import logging
+import time
 from pathlib import Path
 
 from moviepy import (
@@ -37,11 +38,19 @@ def render_final_video(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     if output_path is None:
-        output_path = FINAL_DIR / "final_video.mp4"
+        # Use a timestamp to keep previous versions as requested
+        timestamp = int(time.time())
+        output_path = FINAL_DIR / f"final_video_{timestamp}.mp4"
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Run retention cleanup (keep current + 2 previous = 3 total)
+    _cleanup_old_videos()
+
     audio_clip = None
+    final_video = None
+    final_clip = None
     clips_to_close = []
 
     try:
@@ -63,7 +72,8 @@ def render_final_video(
 
         # Stitch clips together
         logger.info("Stitching %d clips...", len(video_clips))
-        final_video = concatenate_videoclips(video_clips, method="compose")
+        # method="chain" is faster and more stable for identical-size clips
+        final_video = concatenate_videoclips(video_clips, method="chain")
         
         # Ensure it matches audio duration exactly (trim/loop last bit if needed)
         if final_video.duration > audio_duration:
@@ -80,22 +90,27 @@ def render_final_video(
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
-            threads=4,
+            preset="ultrafast",
+            threads=8,  # Increased threads for multi-core performance
             logger=None,
         )
 
-        final_path = str(output_path.resolve())
-        # Close explicitly before returning
-        final_clip.close()
-        final_video.close()
-
-        return final_path
+        return str(output_path.resolve())
 
     except Exception as exc:
         logger.error("Video rendering failed: %s", exc)
         raise
     finally:
+        if final_clip:
+            try:
+                final_clip.close()
+            except Exception:
+                pass
+        if final_video:
+            try:
+                final_video.close()
+            except Exception:
+                pass
         if audio_clip:
             try:
                 audio_clip.close()
@@ -112,7 +127,8 @@ def render_final_video(
 
 def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     """Load, resize, and loop/trim a clip to match target duration."""
-    clip = VideoFileClip(str(path))
+    # Load without audio to save RAM and avoid crash
+    clip = VideoFileClip(str(path), audio=False).with_fps(VIDEO_FPS)
     
     # 1. Loop if shorter than target
     if clip.duration < target_duration:
@@ -148,3 +164,18 @@ def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     )
     
     return clip
+
+def _cleanup_old_videos(keep_count: int = 3) -> None:
+    """Keep only the most recent 'keep_count' videos in the final directory."""
+    try:
+        video_files = sorted(
+            FINAL_DIR.glob("final_video_*.mp4"),
+            key=lambda x: x.stat().st_mtime,
+            reverse=True
+        )
+        if len(video_files) > keep_count:
+            for f in video_files[keep_count:]:
+                logger.info("Cleaning up old video: %s", f.name)
+                f.unlink()
+    except Exception as e:
+        logger.warning("Retention cleanup failed: %s", e)

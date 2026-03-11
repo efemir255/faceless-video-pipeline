@@ -238,19 +238,23 @@ def _run_generate(script: str, kw: str) -> None:
     audio_path, duration = generate_audio(script)
     st.session_state.audio_path = audio_path
     st.session_state.audio_duration = duration
+    st.toast("TTS Audio generated!", icon="🎙️")
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
     clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
     st.session_state.video_path = clips_metadata  # Store the list of clips
+    st.toast("Clips fetched from Pexels!", icon="🎥")
 
     # Step 3 — Render
     progress.progress(70, text="🔧 Stitching and rendering final video…")
+    # BUG FIX: Ensure we use the latest timestamped path returned by the engine
     final_path = render_final_video(audio_path, clips_metadata)
     st.session_state.final_video_path = final_path
 
-    progress.progress(100, text="✅ Video connected to story!")
+    progress.progress(100, text="✅ Video generated!")
     st.balloons()
+    st.toast("Rendering complete! Ready for preview.", icon="✅")
 
 
 if generate_btn:
@@ -295,6 +299,7 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
     # ── Approve & Upload ─────────────────────────────────────────────
     with col1:
         if st.button("✅ Approve & Upload", use_container_width=True, type="primary"):
+            st.toast("Starting upload process...", icon="🚀")
             platforms = []
             if st.session_state.upload_youtube:
                 platforms.append("youtube")
@@ -347,6 +352,7 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         final_path = render_final_video(
                             st.session_state.audio_path, new_clips
                         )
+                        # BUG FIX: Update session state with the new timestamped path
                         st.session_state.final_video_path = final_path
                     st.rerun()
                 except Exception as exc:
@@ -362,6 +368,9 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                 if directory.exists():
                     for f in directory.iterdir():
                         # BUG FIX: Only delete files, not subdirectories.
+                        # Also respect retention policy in FINAL_DIR (handled by engine usually,
+                        # but Discard should probably clear everything EXCEPT the last few if we want safety,
+                        # or clear everything for a fresh start). Let's clear all for fresh start.
                         if f.is_file():
                             try:
                                 f.unlink()
