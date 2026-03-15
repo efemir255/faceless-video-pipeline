@@ -30,7 +30,7 @@ def _generate_sync(text: str, output_path: Path, voice: str) -> None:
         result = subprocess.run(
             [python_exe, str(cli_script), "--voice", voice, "--output", str(output_path)],
             input=text,
-            capture_output=True,
+            capture_output=False, # Changed to False to see output in logs
             text=True,
             check=True
         )
@@ -42,9 +42,10 @@ def generate_audio(
     text: str,
     output_path: str | Path | None = None,
     voice: str = DEFAULT_TTS_VOICE,
-) -> tuple[str, float]:
+) -> tuple[str, float, str]:
     """
     Generate TTS audio from *text* and save it as an MP3 file.
+    Returns (audio_path, duration, timing_json_path).
     """
     if not text or not text.strip():
         raise ValueError("Cannot generate audio from empty text.")
@@ -52,6 +53,7 @@ def generate_audio(
     if output_path is None:
         output_path = AUDIO_DIR / "tts_output.mp3"
     output_path = Path(output_path)
+    timing_path = output_path.with_suffix(".json")
 
     try:
         logger.info("Generating TTS audio (isolated process) ...")
@@ -70,7 +72,7 @@ def generate_audio(
             raise RuntimeError(f"Audio file has invalid duration ({duration}s).")
 
         logger.info("TTS audio saved -> %s  (%.1f s)", output_path.name, duration)
-        return str(output_path.resolve()), duration
+        return str(output_path.resolve()), duration, str(timing_path.resolve())
 
     except Exception as exc:
         logger.error("TTS generation failed: %s", exc)

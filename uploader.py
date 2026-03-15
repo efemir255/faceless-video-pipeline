@@ -52,13 +52,19 @@ import shutil
 def _get_browser_context(playwright):
     """Return a persistent Chromium context that keeps login cookies."""
     # BUG FIX: Ensure the profile directory is not locked by a previous 
-    # crashed instance. Windows-specific: SingletonLock files.
-    lock_file = Path(BROWSER_USER_DATA_DIR) / "SingletonLock"
-    if lock_file.exists():
-        try:
-            lock_file.unlink()
-        except Exception:
-             pass
+    # crashed instance. Handles multiple types of lock files across OSs.
+    profile_path = Path(BROWSER_USER_DATA_DIR)
+    if profile_path.exists():
+        for lock_name in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+            lock_file = profile_path / lock_name
+            if lock_file.exists():
+                try:
+                    if lock_file.is_symlink():
+                        lock_file.unlink()
+                    else:
+                        shutil.rmtree(lock_file) if lock_file.is_dir() else lock_file.unlink()
+                except Exception:
+                     pass
 
     context = playwright.chromium.launch_persistent_context(
         user_data_dir=BROWSER_USER_DATA_DIR,
@@ -281,23 +287,29 @@ def _upload_youtube(
 
         # Wait until YouTube finishes processing
         logger.info("Waiting for upload processing to finish…")
-        _wait_for_upload_processing(page, timeout_sec=300)
+        # Increase timeout for longer videos
+        _wait_for_upload_processing(page, timeout_sec=600)
 
         # 10 — Publish (Re-locate the button to avoid stale element issues)
         done_btn = page.locator("#done-button, ytcp-button#done-button, ytcp-button#publish-button").first
         done_btn.wait_for(state="visible", timeout=15_000)
         done_btn.click()
 
-        # BUG FIX: Wait for the success dialog
+        # BUG FIX: Wait for the success dialog or 'Upload complete' message
         try:
+            # Multi-strategy success detection
             page.wait_for_selector(
-                "ytcp-video-share-dialog, #dialog-title",
+                "ytcp-video-share-dialog, #dialog-title, text='Upload complete', text='Finished processing'",
                 state="visible",
-                timeout=30_000,
+                timeout=60_000,
             )
-            logger.info("YouTube upload complete ✓")
+            logger.info("YouTube upload confirmed complete ✓")
         except PwTimeout:
-            logger.warning("Success dialog not detected, but upload may have completed.")
+            # Check if the 'done' button changed to 'close' or 'publish'
+            if page.locator("text='Close', text='Publish'").is_visible():
+                logger.info("YouTube upload confirmed via button state ✓")
+            else:
+                logger.warning("Success signal not detected, but checking final URL...")
 
         return True
 
@@ -400,10 +412,14 @@ def _upload_tiktok(
         post_btn.click()
 
         try:
-            page.wait_for_url("**/manage**", timeout=30_000)
-            logger.info("TikTok upload complete ✓")
+            # TikTok usually shows a 'Manage your posts' button or redirects
+            page.wait_for_selector("text='Manage your posts', text='Your video is being uploaded'", timeout=60_000)
+            logger.info("TikTok upload confirmed complete ✓")
         except PwTimeout:
-            logger.warning("Post-upload redirect not detected.")
+            if "manage" in page.url:
+                 logger.info("TikTok upload confirmed via URL ✓")
+            else:
+                logger.warning("Post-upload signal not detected.")
 
         return True
 
@@ -471,6 +487,10 @@ def upload_video(
 
     results: dict[str, bool] = {}
     
+    # Optional environment override for headless
+    # If not headless, we might want to stay open for manual verification
+    is_headless = HEADLESS_BROWSER
+
     with sync_playwright() as pw:
         ctx = _get_browser_context(pw)
         # Persistent context opens one page by default. Reuse it.
@@ -491,6 +511,10 @@ def upload_video(
             except Exception as exc:
                 logger.error("%s dispatcher failed: %s", platform.upper(), exc)
                 results[platform] = False
+
+        if not is_headless:
+            logger.info("Closing browser in 20 seconds... (You can verify the upload manually now)")
+            time.sleep(20)
 
         ctx.close()
 

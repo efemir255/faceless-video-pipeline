@@ -20,10 +20,15 @@ from config import VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_FPS, FINAL_DIR
 logger = logging.getLogger(__name__)
 
 
+import json
+import time
+from moviepy import TextClip, ColorClip, CompositeVideoClip
+
 def render_final_video(
     audio_path: str | Path,
     video_source: str | Path | list[dict],
     output_path: str | Path | None = None,
+    subtitles_path: str | Path | None = None,
 ) -> str:
     """
     Composite *audio_path* over *video_source* into a final 1080x1920 MP4.
@@ -37,7 +42,8 @@ def render_final_video(
         raise FileNotFoundError(f"Audio file not found: {audio_path}")
 
     if output_path is None:
-        output_path = FINAL_DIR / "final_video.mp4"
+        timestamp = int(time.time())
+        output_path = FINAL_DIR / f"final_video_{timestamp}.mp4"
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +69,8 @@ def render_final_video(
 
         # Stitch clips together
         logger.info("Stitching %d clips...", len(video_clips))
-        final_video = concatenate_videoclips(video_clips, method="compose")
+        # method="chain" is much faster than "compose" if all clips are the same size
+        final_video = concatenate_videoclips(video_clips, method="chain")
         
         # Ensure it matches audio duration exactly (trim/loop last bit if needed)
         if final_video.duration > audio_duration:
@@ -73,6 +80,13 @@ def render_final_video(
             final_video = final_video.with_effects([vfx.Loop(duration=audio_duration)])
 
         final_clip = final_video.with_audio(audio_clip)
+
+        # ── Subtitles Overlay ─────────────────────────────────────────────
+        if subtitles_path and Path(subtitles_path).exists():
+            logger.info("Adding subtitles from %s", Path(subtitles_path).name)
+            subtitle_clips = _generate_subtitle_clips(subtitles_path)
+            if subtitle_clips:
+                final_clip = CompositeVideoClip([final_clip] + subtitle_clips)
         
         logger.info("Rendering final video → %s", output_path.name)
         final_clip.write_videofile(
@@ -89,6 +103,9 @@ def render_final_video(
         # Close explicitly before returning
         final_clip.close()
         final_video.close()
+
+        # ── Cleanup Old Videos ────────────────────────────────────────────
+        _cleanup_old_videos(FINAL_DIR, keep=3)
 
         return final_path
 
@@ -108,6 +125,22 @@ def render_final_video(
                 pass
             
     return ""  # Should not be reached due to raise in except
+
+
+def _cleanup_old_videos(directory: Path, keep: int = 3) -> None:
+    """Keep only the 'keep' most recent .mp4 files in a directory."""
+    try:
+        files = sorted(
+            list(directory.glob("final_video_*.mp4")),
+            key=lambda x: x.stat().st_mtime,
+            reverse=True
+        )
+        if len(files) > keep:
+            for f in files[keep:]:
+                f.unlink()
+                logger.debug("Deleted old video: %s", f.name)
+    except Exception as e:
+        logger.warning("Cleanup failed: %s", e)
 
 
 def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
@@ -148,3 +181,144 @@ def _prepare_clip(path: str | Path, target_duration: float) -> VideoFileClip:
     )
     
     return clip
+
+
+def _generate_subtitle_clips(subtitles_path: str | Path) -> list:
+    """
+    Parse the timing JSON and create a list of TextClip overlays.
+    Uses Pillow-based fallback if ImageMagick is not available.
+    """
+    try:
+        with open(subtitles_path, "r", encoding="utf-8") as f:
+            word_data = json.load(f)
+    except Exception as e:
+        logger.error("Failed to load subtitles JSON: %s", e)
+        return []
+
+    subtitle_clips = []
+
+    # Try to see if TextClip works (needs ImageMagick)
+    use_textclip = True
+    try:
+        # Dummy check
+        tc = TextClip(text="test", font_size=20)
+        tc.close()
+    except Exception:
+        logger.warning("TextClip (ImageMagick) not available. Subtitles will be skipped or need Pillow fallback.")
+        use_textclip = False
+
+    if not use_textclip:
+        logger.info("Using Pillow fallback for subtitles...")
+        return _generate_subtitle_clips_pillow(word_data)
+
+    for item in word_data:
+        start = item["start"]
+        duration = item["duration"]
+        text = item["text"].upper() # High-impact "Shorts" style
+
+        if duration <= 0:
+            continue
+
+        # Create a stylized text clip with a background box for maximum visibility
+        txt = TextClip(
+            text=text,
+            font_size=90,
+            color="yellow",
+            stroke_color="black",
+            stroke_width=3,
+            bg_color="rgba(0,0,0,0.5)", # 50% transparent black background
+            method="caption",
+            size=(int(VIDEO_WIDTH * 0.9), None),
+            text_align="center"
+        ).with_start(start).with_duration(duration).with_position(("center", int(VIDEO_HEIGHT * 0.7)))
+
+        subtitle_clips.append(txt)
+
+    return subtitle_clips
+
+
+from PIL import Image, ImageDraw, ImageFont
+from moviepy import ImageClip
+
+def _generate_subtitle_clips_pillow(word_data: list) -> list:
+    """
+    Fallback for when ImageMagick is missing.
+    Renders text to a transparent PNG using Pillow, then loads as ImageClip.
+    """
+    subtitle_clips = []
+
+    # Try to find a font
+    try:
+        # Common linux paths
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+            "DejaVuSans-Bold"
+        ]
+        font = None
+        for p in font_paths:
+            try:
+                font = ImageFont.truetype(p, 70)
+                break
+            except Exception:
+                continue
+        if not font:
+            font = ImageFont.load_default()
+    except Exception:
+        font = ImageFont.load_default()
+
+    for item in word_data:
+        start = item["start"]
+        duration = item["duration"]
+        text = item["text"].upper()
+
+        if duration <= 0:
+            continue
+
+        # We'll create a canvas wide enough for word wrapping if needed
+        # but for Shorts-style, we usually want one word at a time
+        padding = 20
+
+        # Estimate height based on font size + padding
+        # We create a dummy draw to measure
+        dummy_img = Image.new("RGBA", (VIDEO_WIDTH, 300), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(dummy_img)
+
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+        except AttributeError:
+            text_w, text_h = draw.textsize(text, font=font)
+
+        # Create the actual background box based on text size
+        box_w = int(text_w + padding * 4)
+        box_h = int(text_h + padding * 2)
+
+        # Create a transparent image for the whole video width to make positioning easier
+        img = Image.new("RGBA", (VIDEO_WIDTH, box_h), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+
+        # Draw background rectangle
+        x_box = (VIDEO_WIDTH - box_w) // 2
+        draw.rectangle([x_box, 0, x_box + box_w, box_h], fill=(0, 0, 0, 128)) # 50% opacity
+
+        # Draw text centered in that box
+        x_text = (VIDEO_WIDTH - text_w) // 2
+        y_text = (box_h - text_h) // 2 - 5 # Slight adjustment
+
+        # Stroke (draw 8 times for a thicker border)
+        for ox, oy in [(-3,-3), (-3,3), (3,-3), (3,3), (0,-3), (0,3), (-3,0), (3,0)]:
+            draw.text((x_text + ox, y_text + oy), text, font=font, fill="black")
+
+        # Main text
+        draw.text((x_text, y_text), text, font=font, fill="yellow")
+
+        # Convert to numpy array for MoviePy
+        import numpy as np
+        img_array = np.array(img)
+
+        txt_clip = ImageClip(img_array).with_start(start).with_duration(duration).with_position(("center", int(VIDEO_HEIGHT * 0.7)))
+        subtitle_clips.append(txt_clip)
+
+    return subtitle_clips

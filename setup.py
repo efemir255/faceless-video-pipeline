@@ -2,9 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
     name="faceless-video-pipeline",
-    version="0.1.0",
+    version="1.0.0",
     packages=find_packages(),
-    py_modules=["config", "tts_engine", "video_fetcher", "video_engine", "uploader", "app"],
+    py_modules=["config", "tts_engine", "video_fetcher", "video_engine", "uploader", "app", "reddit_fetcher", "tts_cli"],
     install_requires=[
         "edge-tts>=6.1.0",
         "mutagen>=1.47.0",
