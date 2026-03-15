@@ -41,6 +41,19 @@ logging.basicConfig(
 # ─── Project Root ────────────────────────────────────────────────────────
 PROJECT_ROOT = _THIS_DIR
 
+# ─── Assets ─────────────────────────────────────────────────────────────
+ASSETS_DIR = PROJECT_ROOT / "assets"
+BACKGROUNDS_DIR = ASSETS_DIR / "backgrounds"
+
+# Category mappings for local backgrounds
+VIDEO_CATEGORIES = {
+    "Minecraft Parkour": str(BACKGROUNDS_DIR / "minecraft"),
+    "GTA 5 Gameplay": str(BACKGROUNDS_DIR / "gta5"),
+    "Satisfying": str(BACKGROUNDS_DIR / "satisfying"),
+    "Soap Cutting": str(BACKGROUNDS_DIR / "soap_cutting"),
+    "Nature (Default)": str(BACKGROUNDS_DIR / "nature"),
+}
+
 # ─── Output Directories ─────────────────────────────────────────────────
 OUTPUT_DIR = PROJECT_ROOT / "output"
 AUDIO_DIR = OUTPUT_DIR / "audio"
@@ -68,6 +81,11 @@ if not PEXELS_API_KEY:
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
 VIDEO_FPS = 30
+
+# Use a specific GPU ID for NVENC (e.g., "0" or "1").
+# If None, the app will try to detect the best available GPU.
+# RENDER_GPU_ID=1 in .env
+RENDER_GPU_ID = os.getenv("RENDER_GPU_ID", None)
 
 # ─── TTS (edge-tts) ─────────────────────────────────────────────────────
 # Full list of voices:  edge-tts --list-voices

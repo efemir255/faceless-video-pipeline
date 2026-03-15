@@ -239,6 +239,7 @@ def _upload_youtube(
         kids_selectors = [
             "tp-yt-paper-radio-button[name='VIDEO_MADE_FOR_KIDS_NOT_MFK']",
             "tp-yt-paper-radio-button:has-text('No, it\\'s not made for kids')",
+            "[aria-label*='not made for kids']",
             "#made-for-kids-group #off",
             "ytkc-made-for-kids-select #off"
         ]
@@ -491,6 +492,16 @@ def upload_video(
             except Exception as exc:
                 logger.error("%s dispatcher failed: %s", platform.upper(), exc)
                 results[platform] = False
+
+        # BUG FIX: Allow manual verification before the browser context closes
+        if not HEADLESS_BROWSER:
+            logger.info("UPLOAD COMPLETE: Keeping browser open for manual verification...")
+            logger.info("Close the browser window when you are finished.")
+            try:
+                # Wait until all pages are closed or the context is closed
+                page.wait_for_event("close", timeout=0)
+            except Exception:
+                pass
 
         ctx.close()
 

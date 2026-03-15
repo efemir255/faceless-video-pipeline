@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import argparse
+import json
 from pathlib import Path
 import edge_tts
 
@@ -24,8 +25,55 @@ async def main():
         print("Error: No text provided via --text or stdin.")
         sys.exit(1)
 
+    output_path = Path(args.output)
+    timing_path = output_path.with_suffix(".json")
+
     communicate = edge_tts.Communicate(text, args.voice)
-    await communicate.save(args.output)
+
+    audio_data = bytearray()
+    word_boundaries = []
+
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            audio_data.extend(chunk["data"])
+        elif chunk["type"] == "WordBoundary":
+            # Convert offset from 100ns units to seconds
+            word_boundaries.append({
+                "start": chunk["offset"] / 10_000_000,
+                "duration": chunk["duration"] / 10_000_000,
+                "text": chunk["text"]
+            })
+
+    with open(output_path, "wb") as f:
+        f.write(audio_data)
+
+    # Fallback: if no WordBoundary events, distribute duration proportionally
+    if not word_boundaries:
+        try:
+            from mutagen.mp3 import MP3
+            audio_info = MP3(str(output_path))
+            total_duration = audio_info.info.length
+
+            words = text.split()
+            total_chars = sum(len(w) for w in words)
+
+            current_time = 0.0
+            for w in words:
+                w_dur = (len(w) / total_chars) * total_duration if total_chars > 0 else 0
+                word_boundaries.append({
+                    "start": current_time,
+                    "duration": w_dur,
+                    "text": w
+                })
+                current_time += w_dur
+        except Exception as e:
+            print(f"Warning: Could not generate fallback subtitles: {e}")
+
+    # Save timing data to JSON
+    with open(timing_path, "w", encoding="utf-8") as f:
+        json.dump(word_boundaries, f, indent=2)
+
+    print(f"Subtitles saved to {timing_path}")
 
 if __name__ == "__main__":
     asyncio.run(main())
