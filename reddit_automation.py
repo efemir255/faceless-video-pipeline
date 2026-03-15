@@ -41,7 +41,16 @@ def run_auto_pipeline(category: str, platforms: list[str]):
         # 3. Clips
         logger.info("Fetching clips...")
         # Use a generic keyword related to the category
-        base_kw = "scary" if category == "scary" else "nature"
+        category_kw_map = {
+            "scary": "scary",
+            "funny": "funny",
+            "interesting": "interesting",
+            "drama": "drama",
+            "tales": "tales",
+            "entitled": "angry",
+            "revenge": "justice"
+        }
+        base_kw = category_kw_map.get(category.lower(), "nature")
         clips_metadata = get_clips_for_script(script, duration, base_keyword=base_kw)
 
         # 4. Render
@@ -65,7 +74,7 @@ def run_auto_pipeline(category: str, platforms: list[str]):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automated Reddit Video Pipeline")
-    parser.add_argument("--category", choices=["interesting", "funny", "scary"], default="interesting")
+    parser.add_argument("--category", choices=["interesting", "funny", "scary", "drama", "tales", "entitled", "revenge"], default="interesting")
     parser.add_argument("--upload", nargs="+", choices=["youtube", "tiktok"], help="Platforms to upload to")
 
     args = parser.parse_args()

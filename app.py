@@ -36,7 +36,7 @@ from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script, get_background_video
 from video_engine import render_final_video
 from uploader import upload_video, manual_login
-from reddit_fetcher import get_reddit_story
+from reddit_fetcher import get_reddit_story, fetch_series_parts
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ with st.expander("🤖 Source Content from Reddit"):
     with col_red1:
         reddit_category = st.selectbox(
             "Select Story Category",
-            ["Interesting", "Funny", "Scary"],
+            ["Interesting", "Funny", "Scary", "Drama", "Tales", "Entitled", "Revenge"],
             index=0
         )
     with col_red2:
@@ -174,7 +174,41 @@ with st.expander("🤖 Source Content from Reddit"):
 
     if "reddit_story" in st.session_state:
         story = st.session_state["reddit_story"]
-        if st.button("📝 Use this Story", use_container_width=True):
+
+        # Series Detection UI
+        if story.get("series_part") is not None:
+            st.info(f"📍 This story is identified as **Part {story['series_part']}** of a series.")
+            if st.button("📚 Fetch Entire Series", use_container_width=True):
+                with st.spinner("Fetching all parts..."):
+                    parts = fetch_series_parts(story["author"], story["title"])
+                    if parts:
+                        st.session_state["reddit_series"] = parts
+                        st.success(f"Found {len(parts)} parts in this series!")
+                    else:
+                        st.warning("Could not find other parts for this series.")
+
+        if "reddit_series" in st.session_state:
+            series_parts = st.session_state["reddit_series"]
+            selected_part_idx = st.selectbox(
+                "Select a part to use:",
+                range(len(series_parts)),
+                format_func=lambda i: f"Part {series_parts[i]['part']}: {series_parts[i]['title']}"
+            )
+            if st.button("📝 Use Selected Part", use_container_width=True):
+                story = series_parts[selected_part_idx]
+                st.session_state["reddit_story"] = story # Update current story
+                st.session_state.last_script = story["text"]
+                st.session_state.last_title = story["title"]
+                st.session_state.last_description = f"Story from r/{story['subreddit']}\n#shorts #reddit"
+                st.session_state.last_keyword = reddit_category.lower()
+
+                st.session_state.f_script = st.session_state.last_script
+                st.session_state.f_title = st.session_state.last_title
+                st.session_state.f_desc = st.session_state.last_description
+                st.session_state.f_keyword = st.session_state.last_keyword
+                st.rerun()
+
+        elif st.button("📝 Use this Story", use_container_width=True):
             # Update the underlying session state values
             st.session_state.last_script = story["text"]
             st.session_state.last_title = story["title"]
