@@ -13,8 +13,6 @@ from pathlib import Path
 from moviepy import (
     AudioFileClip,
     VideoFileClip,
-    ColorClip,
-    TextClip,
     ImageClip,
     CompositeVideoClip,
     concatenate_videoclips,
@@ -102,7 +100,7 @@ def render_final_video(
                     bottom_half = bottom_clip_full.cropped(y1=VIDEO_HEIGHT//4, y2=3*VIDEO_HEIGHT//4)
                     bottom_half = bottom_half.with_position(("center", "bottom"))
 
-                    final_video = CompositeVideoClip([top_half, bottom_half], size=(VIDEO_WIDTH, VIDEO_HEIGHT))
+                    final_video = CompositeVideoClip([top_half, bottom_half], size=(VIDEO_WIDTH, VIDEO_HEIGHT), bg_color=(0,0,0))
                     clips_to_close.append(final_video)
             except Exception as e:
                 logger.warning("Failed to apply split-screen: %s", e)
@@ -191,7 +189,7 @@ def render_final_video(
             except Exception as e:
                 logger.warning("Failed to add subtitles: %s", e)
 
-        final_video = CompositeVideoClip(final_composite)
+        final_video = CompositeVideoClip(final_composite, size=(VIDEO_WIDTH, VIDEO_HEIGHT), bg_color=(0,0,0))
 
         # ─── Audio Mixing (Speech + BGM) ───────────────────────────────────
         final_audio = audio_clip
@@ -223,7 +221,7 @@ def render_final_video(
             fps=VIDEO_FPS,
             codec="libx264",
             audio_codec="aac",
-            preset="medium",
+            preset="ultrafast",
             threads=4,
             logger=None,
         )
@@ -298,13 +296,11 @@ def _prepare_clip(path: str | Path, target_duration: float, random_start: bool =
     return clip
 
 
-def _create_dynamic_subtitles(words: list[dict]) -> list[TextClip]:
-    """Create a list of TextClips for each word with highlighting."""
+def _create_dynamic_subtitles(words: list[dict]) -> list[ImageClip]:
+    """Create a list of ImageClips for each word with highlighting using Pillow."""
     clips = []
 
-    # Configuration for text
     font_size = 70
-    color = "white"
     stroke_color = "black"
     stroke_width = 2
 
@@ -317,37 +313,19 @@ def _create_dynamic_subtitles(words: list[dict]) -> list[TextClip]:
         if duration <= 0:
             continue
 
-        # Create a single word clip
         try:
-            # We use a yellow highlight for every word when it's spoken
-            # In a more advanced version, we could show the whole sentence
-            # and only highlight the active word.
-            txt_clip = TextClip(
-                text=word.upper(),
+            # Using Pillow fallback directly to avoid ImageMagick 'rgba' errors
+            txt_clip = _create_text_clip_pillow(
+                word.upper(),
                 font_size=font_size,
                 color="yellow",
                 stroke_color=stroke_color,
-                stroke_width=stroke_width,
-                method="caption",
-                size=(VIDEO_WIDTH * 0.8, None)
+                stroke_width=stroke_width
             ).with_start(start).with_duration(duration).with_position(("center", VIDEO_HEIGHT * 0.75))
 
             clips.append(txt_clip)
         except Exception as e:
-            # Fallback for when ImageMagick/TextClip is not working
-            logger.debug("TextClip failed, using Pillow fallback for word '%s': %s", word, e)
-            try:
-                txt_clip = _create_text_clip_pillow(
-                    word.upper(),
-                    font_size=font_size,
-                    color="yellow",
-                    stroke_color=stroke_color,
-                    stroke_width=stroke_width
-                ).with_start(start).with_duration(duration).with_position(("center", VIDEO_HEIGHT * 0.75))
-                clips.append(txt_clip)
-            except Exception as e2:
-                logger.error("Pillow fallback also failed for word '%s': %s", word, e2)
-                continue
+            logger.error("Failed to create subtitle clip for word '%s': %s", word, e)
 
     return clips
 
