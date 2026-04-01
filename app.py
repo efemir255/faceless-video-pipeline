@@ -31,12 +31,13 @@ import streamlit as st
 # Apply nest_asyncio so sync Playwright can run within Streamlit's event loop.
 nest_asyncio.apply()
 
-from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR
+from config import FINAL_DIR, AUDIO_DIR, VIDEO_DIR, VIDEO_CATEGORIES
 from tts_engine import generate_audio
 from video_fetcher import get_clips_for_script, get_background_video
 from video_engine import render_final_video
+from bgm_fetcher import get_random_bgm
 from uploader import upload_video, manual_login
-from reddit_fetcher import get_reddit_story
+from reddit_fetcher import get_reddit_story, capture_post_screenshot
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,11 @@ _DEFAULTS = {
     # a st.rerun() after "Regenerate BG" — without this the form fields
     # reset to empty and the regen uses "nature" as a fallback.
     "last_keyword": "",
+    "last_source": "Pexels (Search)",
+    "last_category": list(VIDEO_CATEGORIES.keys())[0],
+    "last_reddit_url": None,
+    "screenshot_path": None,
+    "bgm_path": None,
     "last_title": "",
     "last_description": "",
     "last_script": "",
@@ -180,6 +186,7 @@ with st.expander("🤖 Source Content from Reddit"):
             st.session_state.last_title = story["title"]
             st.session_state.last_description = f"Story from r/{story['subreddit']}\n#shorts #reddit"
             st.session_state.last_keyword = reddit_category.lower()
+            st.session_state.last_reddit_url = story["full_url"]
 
             # CRITICAL: Also update the widget keys directly so the form
             # reflects the changes even if the user has already typed.
@@ -201,12 +208,43 @@ with st.form("video_form"):
         value=st.session_state.last_script,
         key="f_script"
     )
+
+    bg_source = st.radio(
+        "🎬 Video Source",
+        ["Pexels (Search)", "Built-in (Most Used)"],
+        index=0 if st.session_state.last_source == "Pexels (Search)" else 1,
+        key="f_source",
+        horizontal=True
+    )
+
     keyword = st.text_input(
-        "🔍 Background Keyword",
+        "🔍 Search Keyword (Pexels)",
         placeholder='e.g. "ocean waves", "city night", "forest"',
         value=st.session_state.last_keyword,
-        key="f_keyword"
+        key="f_keyword",
+        disabled=(bg_source == "Built-in (Most Used)")
     )
+
+    category = st.selectbox(
+        "📂 Choose Category (Built-in)",
+        options=list(VIDEO_CATEGORIES.keys()),
+        index=list(VIDEO_CATEGORIES.keys()).index(st.session_state.last_category),
+        key="f_category",
+        disabled=(bg_source == "Pexels (Search)"),
+        help="Select one of the pre-sourced most popular background categories."
+    )
+
+    col_v1, col_v2 = st.columns(2)
+    with col_v1:
+        st.checkbox("🌓 Split-Screen", key="f_split_screen", help="Show two videos at once (top/bottom).")
+    with col_v2:
+        st.checkbox("📏 Progress Bar", key="f_progress_bar", help="Add a visual progress bar at the bottom.")
+
+    st.text_input("📣 Call to Action (CTA)", placeholder='e.g. "Subscribe for more!", "Like & Follow"', key="f_cta")
+
+    with st.expander("✨ AI Enhancements"):
+        st.checkbox("🤖 Auto-generate AI Hook", key="f_ai_hook", help="Rewrite the first sentence to be more engaging.")
+        st.checkbox("🎭 Add Random Emojis", key="f_emojis", help="Sprinkle emojis throughout the script.")
     video_title = st.text_input(
         "🏷️ Video Title",
         placeholder="Title for YouTube / TikTok",
@@ -220,6 +258,17 @@ with st.form("video_form"):
         value=st.session_state.last_description,
         key="f_desc"
     )
+
+    st.divider()
+    st.subheader("🎵 Background Music")
+    col_bgm1, col_bgm2 = st.columns(2)
+    with col_bgm1:
+        from config import BGM_DIR
+        bgm_options = ["None", "Random"] + [f.name for f in BGM_DIR.glob("*") if f.suffix in [".mp3", ".wav", ".m4a"]]
+        st.selectbox("BGM Track", bgm_options, key="bgm_selection")
+    with col_bgm2:
+        st.slider("BGM Volume", 0.0, 0.5, 0.1, 0.05, key="bgm_volume")
+
     generate_btn = st.form_submit_button(
         "🚀 Generate Video", use_container_width=True
     )
@@ -229,24 +278,81 @@ with st.form("video_form"):
 #  Generate pipeline
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _run_generate(script: str, kw: str) -> None:
+def _run_generate(script: str, kw: str, source: str = "pexels", category: str | None = None) -> None:
     """Run the full TTS → fetch segments → stitch → render pipeline."""
     progress = st.progress(0, text="Starting…")
 
+    # Step -1 — AI Enhancements
+    if st.session_state.get("f_ai_hook"):
+        # Simple AI hook logic: find first sentence and make it punchy
+        sentences = re.split(r"(?<=[.!?])\s+", script)
+        if sentences:
+            sentences[0] = f"You won't believe this: {sentences[0]}"
+            script = " ".join(sentences)
+
+    if st.session_state.get("f_emojis"):
+        emojis = ["🔥", "😱", "🤯", "👀", "✨", "🚀", "💀", "😂"]
+        words = script.split()
+        for i in range(len(words)):
+            if random.random() < 0.1: # 10% chance
+                words[i] += " " + random.choice(emojis)
+        script = " ".join(words)
+
+    # Step 0 — Screenshot (if Reddit story)
+    screenshot_path = None
+    if st.session_state.get("last_reddit_url"):
+        progress.progress(5, text="📸 Capturing Reddit screenshot…")
+        try:
+            ss_filename = f"screenshot_{int(time.time())}.png"
+            ss_path = Path(VIDEO_DIR) / ss_filename
+            screenshot_path = capture_post_screenshot(st.session_state.last_reddit_url, ss_path)
+            st.session_state.screenshot_path = screenshot_path
+        except Exception as e:
+            logger.warning("Failed to capture screenshot: %s", e)
+
     # Step 1 — TTS
     progress.progress(10, text="🎙️ Generating audio…")
-    audio_path, duration = generate_audio(script)
+    audio_path, duration, timing_path = generate_audio(script)
     st.session_state.audio_path = audio_path
+    st.session_state.timing_path = timing_path
     st.session_state.audio_duration = duration
+
+    # Step 1.5 — BGM Selection
+    bgm_track = None
+    selection = st.session_state.get("bgm_selection", "None")
+    if selection == "Random":
+        bgm_track = get_random_bgm()
+    elif selection != "None":
+        from config import BGM_DIR
+        bgm_track = BGM_DIR / selection
+        if not bgm_track.exists():
+            bgm_track = None
+    st.session_state.bgm_path = str(bgm_track) if bgm_track else None
 
     # Step 2 — Fetch relevant clips for script segments
     progress.progress(30, text="🎥 Analyzing script and fetching relevant clips…")
-    clips_metadata = get_clips_for_script(script, duration, base_keyword=kw)
+    clips_metadata = get_clips_for_script(
+        script,
+        duration,
+        base_keyword=kw,
+        source_type=source,
+        category=category
+    )
     st.session_state.video_path = clips_metadata  # Store the list of clips
 
     # Step 3 — Render
     progress.progress(70, text="🔧 Stitching and rendering final video…")
-    final_path = render_final_video(audio_path, clips_metadata)
+    final_path = render_final_video(
+        audio_path,
+        clips_metadata,
+        timing_path=timing_path,
+        screenshot_path=screenshot_path,
+        split_screen=st.session_state.get("f_split_screen", False),
+        bgm_path=st.session_state.get("bgm_path"),
+        bgm_volume=st.session_state.get("bgm_volume", 0.1),
+        progress_bar=st.session_state.get("f_progress_bar", False),
+        cta_text=st.session_state.get("f_cta")
+    )
     st.session_state.final_video_path = final_path
 
     progress.progress(100, text="✅ Video connected to story!")
@@ -256,25 +362,30 @@ def _run_generate(script: str, kw: str) -> None:
 if generate_btn:
     # Read from keys to be extra sure they match current state
     script_text = st.session_state.get("f_script", "").strip()
+    bg_source = st.session_state.get("f_source", "Pexels (Search)")
     keyword = st.session_state.get("f_keyword", "").strip()
+    category = st.session_state.get("f_category")
     video_title = st.session_state.get("f_title", "").strip()
     video_description = st.session_state.get("f_desc", "").strip()
 
     if not script_text:
         st.warning("Please enter a script.")
-    elif not keyword:
+    elif bg_source == "Pexels (Search)" and not keyword:
         st.warning("Please enter a background keyword.")
     else:
         # BUG FIX: Persist form values before running pipeline so they
         # survive st.rerun(). Without this, clicking "Regenerate BG"
         # after a rerun loses the keyword/title/description.
         st.session_state.last_keyword = keyword
+        st.session_state.last_source = bg_source
+        st.session_state.last_category = category
         st.session_state.last_title = video_title
         st.session_state.last_description = video_description
         st.session_state.last_script = script_text
 
         try:
-            _run_generate(script_text.strip(), keyword.strip())
+            source_type = "builtin" if bg_source == "Built-in (Most Used)" else "pexels"
+            _run_generate(script_text.strip(), keyword.strip(), source=source_type, category=category)
         except Exception as exc:
             st.error(f"❌ Pipeline error: {exc}")
 
@@ -339,13 +450,28 @@ if st.session_state.final_video_path and Path(st.session_state.final_video_path)
                         # Use the persisted script for semantic regeneration
                         script = st.session_state.last_script or "nature"
                         keyword = st.session_state.last_keyword or "nature"
+                        source = "builtin" if st.session_state.last_source == "Built-in (Most Used)" else "pexels"
+                        category = st.session_state.last_category
+
                         new_clips = get_clips_for_script(
-                            script, st.session_state.audio_duration, base_keyword=keyword
+                            script,
+                            st.session_state.audio_duration,
+                            base_keyword=keyword,
+                            source_type=source,
+                            category=category
                         )
                         st.session_state.video_path = new_clips
 
                         final_path = render_final_video(
-                            st.session_state.audio_path, new_clips
+                            st.session_state.audio_path,
+                            new_clips,
+                            timing_path=st.session_state.get("timing_path"),
+                            screenshot_path=st.session_state.get("screenshot_path"),
+                            split_screen=st.session_state.get("f_split_screen", False),
+                            bgm_path=st.session_state.get("bgm_path"),
+                            bgm_volume=st.session_state.get("bgm_volume", 0.1),
+                            progress_bar=st.session_state.get("f_progress_bar", False),
+                            cta_text=st.session_state.get("f_cta")
                         )
                         st.session_state.final_video_path = final_path
                     st.rerun()

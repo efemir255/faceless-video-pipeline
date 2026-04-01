@@ -6,6 +6,8 @@ import logging
 import random
 import requests
 import re
+from pathlib import Path
+from playwright.sync_api import sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +111,54 @@ def get_reddit_story(category: str = "interesting", seen_ids: set | None = None)
                 "title": story_title,
                 "text": story_text,
                 "url": f"https://reddit.com{post.get('permalink', '')}",
-                "subreddit": subreddit_name
+                "subreddit": subreddit_name,
+                "full_url": f"https://www.reddit.com{post.get('permalink')}"
             }
 
     except Exception as e:
         logger.error("Failed to fetch from Reddit JSON API: %s", e)
 
     return None
+
+
+def capture_post_screenshot(url: str, output_path: Path) -> str:
+    """Capture a screenshot of a Reddit post using Playwright."""
+    logger.info("Capturing screenshot for: %s", url)
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        # Use a mobile viewport for a better "Shorts" look
+        context = browser.new_context(
+            viewport={"width": 1080, "height": 1920},
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 14_8 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1"
+        )
+        page = context.new_page()
+
+        try:
+            # Go to the post URL
+            page.goto(url, wait_until="networkidle")
+
+            # Try to remove cookie banners or login prompts if they exist
+            try:
+                page.click("text=Accept All", timeout=2000)
+            except Exception:
+                pass
+
+            # Focus on the post content
+            # Reddit post usually has a specific class or ID
+            post_element = page.locator("shreddit-post").first
+            if not post_element.count():
+                post_element = page.locator(".Post").first
+
+            if post_element.count():
+                post_element.screenshot(path=str(output_path))
+            else:
+                # Fallback to full page if element not found
+                page.screenshot(path=str(output_path))
+
+            return str(output_path.resolve())
+        except Exception as e:
+            logger.error("Failed to capture screenshot: %s", e)
+            raise
+        finally:
+            browser.close()
